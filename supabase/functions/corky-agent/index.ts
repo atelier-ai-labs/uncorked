@@ -436,7 +436,11 @@ async function callGeminiWithFallback(
   apiKey: string,
   payload: Record<string, any>
 ): Promise<any> {
-  const models = ["gemini-3.8-flash-lite", "gemini-3.8-flash"];
+  const models = [
+    "gemini-flash-lite-latest",
+    "gemini-3.8-flash",
+    "gemini-flash-latest",
+  ];
 
   for (const modelName of models) {
     try {
@@ -453,12 +457,13 @@ async function callGeminiWithFallback(
       if (res.ok) {
         return await res.json();
       }
-      if (res.status !== 503) {
+      const errText = await res.text();
+      console.warn(`Corky model ${modelName} status ${res.status}`);
+      if (errText.includes("API_KEY_INVALID") || res.status === 403) {
         break;
       }
     } catch (err) {
       console.warn(`Corky model ${modelName} timeout/error:`, err);
-      break;
     }
   }
   return null;

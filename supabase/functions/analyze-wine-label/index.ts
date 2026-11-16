@@ -192,8 +192,12 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Single primary model call, only falling back once if Google returns 503 Unavailable
-    const modelsToTry = ["gemini-3.8-flash-lite", "gemini-3.8-flash"];
+    // Call gemini-flash-lite-latest first (fastest & highest availability), with fallback to gemini-3.8-flash and gemini-flash-latest
+    const modelsToTry = [
+      "gemini-flash-lite-latest",
+      "gemini-3.8-flash",
+      "gemini-flash-latest",
+    ];
     let geminiJson: any = null;
 
     for (const modelName of modelsToTry) {
@@ -229,12 +233,15 @@ Deno.serve(async (req: Request) => {
         if (geminiRes.ok) {
           geminiJson = await geminiRes.json();
           break;
-        } else if (geminiRes.status !== 503) {
-          break;
+        } else {
+          const errText = await geminiRes.text();
+          console.warn(`Model ${modelName} returned ${geminiRes.status}`);
+          if (errText.includes("API_KEY_INVALID") || geminiRes.status === 403) {
+            break;
+          }
         }
       } catch (fetchErr) {
         console.warn(`Model ${modelName} timed out:`, fetchErr);
-        break;
       }
     }
 
