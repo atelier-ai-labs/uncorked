@@ -8,9 +8,13 @@ export interface CompressedPhoto {
   mimeType: string;
 }
 
+const MAX_BASE64_LENGTH = 4_000_000; // ~3 MB max
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Resize and compress a camera/gallery photo to ~1024px width JPEG (0.75 quality).
- * This cuts Gemini Vision token cost and Supabase Storage size by ~90% while keeping label text sharp.
+ * Strips EXIF location/device metadata and keeps payload well under size limits.
  */
 export async function compressBottlePhoto(uri: string): Promise<CompressedPhoto> {
   const manipulated = await ImageManipulator.manipulateAsync(
@@ -24,7 +28,11 @@ export async function compressBottlePhoto(uri: string): Promise<CompressedPhoto>
   );
 
   if (!manipulated.base64) {
-    throw new Error('Failed to encode bottle photo as base64.');
+    throw new Error('Failed to encode bottle photo.');
+  }
+
+  if (manipulated.base64.length > MAX_BASE64_LENGTH) {
+    throw new Error('Compressed image exceeds the 3 MB security limit.');
   }
 
   return {
@@ -35,14 +43,16 @@ export async function compressBottlePhoto(uri: string): Promise<CompressedPhoto>
 }
 
 /**
- * Analyze a wine bottle label using either:
- * 1. The deployed Supabase Edge Function `analyze-wine-label` (recommended, keeps GEMINI_API_KEY on server + checks shared catalog)
- * 2. Direct client-side Gemini Flash call if `EXPO_PUBLIC_GEMINI_API_KEY` is provided in `.env`
+ * Analyze a wine bottle label strictly via the authenticated Supabase Edge Function
+ * (`analyze-wine-label`) so the Gemini API key is never exposed in the mobile client bundle.
  */
 export async function analyzeWineLabel(
   photo: CompressedPhoto
 ): Promise<{ wine: ExtractedWineProfile; cached: boolean }> {
-  // First try the Supabase Edge Function
+  if (photo.base64.length > MAX_BASE64_LENGTH) {
+    throw new Error('Image exceeds the maximum allowed size.');
+  }
+
   const { data, error } = await supabase.functions.invoke('analyze-wine-label', {
     body: {
       imageBase64: photo.base64,
@@ -57,58 +67,11 @@ export async function analyzeWineLabel(
     };
   }
 
-  // Fallback to EXPO_PUBLIC_GEMINI_API_KEY if configured locally
-  const localGeminiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-  if (!localGeminiKey) {
-    const errMsg =
-      data?.error ||
-      error?.message ||
-      'Gemini API key not configured. Add GEMINI_API_KEY to Supabase Edge Function secrets or EXPO_PUBLIC_GEMINI_API_KEY in .env.';
-    throw new Error(errMsg);
-  }
-
-  const geminiRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${localGeminiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: 'You are an expert Master Sommelier. Inspect this wine bottle label carefully. Extract the exact producer, wine name, vintage, region, sub_region, country, appellation, and ABV from the label. Infer the grape varietals, wine_type (red, white, rose, sparkling, dessert, fortified, orange), tasting profile (body, tannin, acidity, sweetness, tasting_notes), concise sommelier summary, food_pairings, serving_temp, decant_time, and drinking_window. Return strict JSON.',
-              },
-              {
-                inlineData: {
-                  mimeType: photo.mimeType,
-                  data: photo.base64,
-                },
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: 'application/json',
-        },
-      }),
-    }
-  );
-
-  if (!geminiRes.ok) {
-    const errText = await geminiRes.text();
-    throw new Error(`Gemini API failed: ${errText}`);
-  }
-
-  const json = await geminiRes.json();
-  const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawText) {
-    throw new Error('Could not read wine label from photo.');
-  }
-
-  const parsed: ExtractedWineProfile = JSON.parse(rawText);
-  return { wine: parsed, cached: false };
+  const errMsg =
+    data?.error ||
+    error?.message ||
+    'Unable to analyze wine label right now. Please try again.';
+  throw new Error(errMsg);
 }
 
 /**
@@ -119,6 +82,10 @@ export async function uploadBottlePhoto(
   photo: CompressedPhoto
 ): Promise<string | null> {
   try {
+    if (!UUID_REGEX.test(userId)) {
+      throw new Error('Invalid user ID for storage path.');
+    }
+
     const filePath = `${userId}/${Date.now()}.jpg`;
     const binaryString = atob(photo.base64);
     const bytes = new Uint8Array(binaryString.length);

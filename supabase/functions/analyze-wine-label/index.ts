@@ -6,6 +6,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const MAX_BASE64_LENGTH = 4_000_000; // ~3 MB max image payload
+const MAX_SCANS_PER_HOUR = 25;
+const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+
 const SOMMELIER_PROMPT = `You are an expert Master Sommelier. Inspect this wine bottle label carefully and return ONLY a single valid JSON object with these exact keys:
 {
   "producer": "Winery, producer, chateau, or domaine name (string)",
@@ -33,7 +37,6 @@ const SOMMELIER_PROMPT = `You are an expert Master Sommelier. Inspect this wine 
 function findGeminiKey(): string | null {
   const candidates = [
     Deno.env.get("GEMINI_API_KEY"),
-    Deno.env.get("EXPO_PUBLIC_GEMINI_API_KEY"),
     Deno.env.get("GOOGLE_API_KEY"),
     Deno.env.get("GEMINI_KEY"),
   ];
@@ -42,17 +45,31 @@ function findGeminiKey(): string | null {
       return val.trim().replace(/^["']|["']$/g, "");
     }
   }
-  const envObj = Deno.env.toObject();
-  for (const [k, v] of Object.entries(envObj)) {
-    if (
-      (k.toUpperCase().includes("GEMINI") || k.toUpperCase().includes("GOOGLE_API")) &&
-      v &&
-      v.trim()
-    ) {
-      return v.trim().replace(/^["']|["']$/g, "");
+  return null;
+}
+
+function sanitizeText(val: unknown, maxLen: number): string | null {
+  if (typeof val !== "string") return null;
+  const cleaned = val.replace(/[\u0000-\u001F\u007F]/g, "").trim();
+  if (!cleaned) return null;
+  return cleaned.slice(0, maxLen);
+}
+
+function sanitizeArray(val: unknown, maxItems = 15, maxItemLen = 80): string[] {
+  if (!Array.isArray(val)) return [];
+  const result: string[] = [];
+  for (const item of val) {
+    const cleaned = sanitizeText(item, maxItemLen);
+    if (cleaned) {
+      result.push(cleaned);
+      if (result.length >= maxItems) break;
     }
   }
-  return null;
+  return result;
+}
+
+function escapeIlike(input: string): string {
+  return input.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 Deno.serve(async (req: Request) => {
@@ -60,10 +77,17 @@ Deno.serve(async (req: Request) => {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
+      return new Response(JSON.stringify({ error: "Authentication required." }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -81,8 +105,26 @@ Deno.serve(async (req: Request) => {
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
+      return new Response(JSON.stringify({ error: "Session expired or unauthorized." }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const body = await req.json();
+    const imageBase64 = typeof body?.imageBase64 === "string" ? body.imageBase64 : "";
+    const mimeType = typeof body?.mimeType === "string" ? body.mimeType : "image/jpeg";
+
+    if (!imageBase64) {
+      return new Response(JSON.stringify({ error: "Image payload is required." }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (imageBase64.length > MAX_BASE64_LENGTH) {
       return new Response(
-        JSON.stringify({ error: `Unauthorized user: ${authError?.message || "no session"}` }),
+        JSON.stringify({ error: "Image exceeds the 3 MB maximum size limit." }),
         {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -90,19 +132,42 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { imageBase64, mimeType = "image/jpeg" } = await req.json();
-    if (!imageBase64) {
-      return new Response(JSON.stringify({ error: "imageBase64 is required" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      return new Response(
+        JSON.stringify({ error: "Unsupported image format. Use JPEG, PNG, or WebP." }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Per-user sliding window rate limit (max 25 AI scans per hour)
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { count: recentScans, error: rateErr } = await supabase
+      .from("ai_scan_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("created_at", oneHourAgo);
+
+    if (!rateErr && (recentScans ?? 0) >= MAX_SCANS_PER_HOUR) {
+      return new Response(
+        JSON.stringify({
+          error: `Hourly scan limit reached (${MAX_SCANS_PER_HOUR} scans/hour). Please try again shortly.`,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
     const geminiApiKey = findGeminiKey();
     if (!geminiApiKey) {
+      console.error("Missing GEMINI_API_KEY secret in Edge Function.");
       return new Response(
         JSON.stringify({
-          error: "GEMINI_API_KEY secret not found in Edge Function environment.",
+          error: "Sommelier AI service is not configured on the server.",
           code: "MISSING_GEMINI_KEY",
         }),
         {
@@ -112,6 +177,9 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Record the scan event for rate-limiting before invoking Gemini
+    await supabase.from("ai_scan_logs").insert({ user_id: user.id });
+
     const modelsToTry = [
       "gemini-3.8-flash-lite",
       "gemini-3.8-flash",
@@ -119,11 +187,9 @@ Deno.serve(async (req: Request) => {
       "gemini-flash-latest",
     ];
     let geminiJson: any = null;
-    let lastErrorText = "";
 
     for (const modelName of modelsToTry) {
       try {
-        const startMs = Date.now();
         const geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`,
           {
@@ -154,64 +220,68 @@ Deno.serve(async (req: Request) => {
 
         if (geminiRes.ok) {
           geminiJson = await geminiRes.json();
-          console.log(`Model ${modelName} succeeded in ${Date.now() - startMs}ms`);
           break;
         } else {
-          lastErrorText = await geminiRes.text();
-          console.warn(
-            `Model ${modelName} failed (${geminiRes.status}) in ${Date.now() - startMs}ms:`,
-            lastErrorText.slice(0, 200)
-          );
-          if (lastErrorText.includes("API_KEY_INVALID") || geminiRes.status === 403) {
+          const errText = await geminiRes.text();
+          console.warn(`Model ${modelName} returned ${geminiRes.status}`);
+          if (errText.includes("API_KEY_INVALID") || geminiRes.status === 403) {
             break;
           }
         }
       } catch (fetchErr) {
-        lastErrorText = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
-        console.warn(`Model ${modelName} timed out or network error:`, lastErrorText);
+        console.warn(`Model ${modelName} timed out:`, fetchErr);
       }
     }
 
     if (!geminiJson) {
-      let friendlyError = `Gemini API error: ${lastErrorText}`;
-      try {
-        const parsedErr = JSON.parse(lastErrorText);
-        if (parsedErr?.error?.message) {
-          friendlyError = `Gemini API: ${parsedErr.error.message}`;
+      return new Response(
+        JSON.stringify({
+          error: "Sommelier AI is temporarily busy. Please try scanning again in a moment.",
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
         }
-      } catch {
-        // ignore
-      }
-      return new Response(JSON.stringify({ error: friendlyError }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      );
     }
 
     const rawText = geminiJson?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!rawText) {
-      return new Response(JSON.stringify({ error: "Could not parse wine label from image" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "Could not read a wine label from that photo." }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
     const cleanedText = rawText.replace(/^```json\s*/i, "").replace(/```\s*$/, "").trim();
     const parsed = JSON.parse(cleanedText);
 
-    const producer = String(parsed.producer || "Unknown Producer").trim();
-    const name = String(parsed.name || "Wine").trim();
-    const vintage = typeof parsed.vintage === "number" ? parsed.vintage : null;
+    const producer = sanitizeText(parsed.producer, 200) || "Unknown Producer";
+    const name = sanitizeText(parsed.name, 200) || "Wine";
+    const rawVintage = typeof parsed.vintage === "number" ? Math.round(parsed.vintage) : null;
+    const vintage =
+      rawVintage && rawVintage >= 1800 && rawVintage <= 2100 ? rawVintage : null;
+
     const validTypes = ["red", "white", "rose", "sparkling", "dessert", "fortified", "orange"];
     const wineType = validTypes.includes(String(parsed.wine_type).toLowerCase())
       ? String(parsed.wine_type).toLowerCase()
       : "red";
 
+    const rawAbv = typeof parsed.abv === "number" ? parsed.abv : null;
+    const abv =
+      rawAbv !== null && rawAbv >= 0 && rawAbv <= 100
+        ? Math.round(rawAbv * 100) / 100
+        : null;
+
+    // Escape ILIKE wildcards (% and _) before querying shared catalog
     let query = supabase
       .from("wines")
       .select("*")
-      .ilike("producer", producer)
-      .ilike("name", name);
+      .ilike("producer", escapeIlike(producer))
+      .ilike("name", escapeIlike(name));
 
     if (vintage) {
       query = query.eq("vintage", vintage);
@@ -227,37 +297,39 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    const sanitizedWine = {
+      producer,
+      name,
+      vintage,
+      wine_type: wineType,
+      region: sanitizeText(parsed.region, 200),
+      sub_region: sanitizeText(parsed.sub_region, 200),
+      country: sanitizeText(parsed.country, 100),
+      appellation: sanitizeText(parsed.appellation, 200),
+      varietals: sanitizeArray(parsed.varietals, 20, 80),
+      abv,
+      body: sanitizeText(parsed.body, 50),
+      tannin: sanitizeText(parsed.tannin, 50),
+      acidity: sanitizeText(parsed.acidity, 50),
+      sweetness: sanitizeText(parsed.sweetness, 50),
+      tasting_notes: sanitizeArray(parsed.tasting_notes, 20, 80),
+      summary: sanitizeText(parsed.summary, 2000),
+      food_pairings: sanitizeArray(parsed.food_pairings, 20, 100),
+      serving_temp: sanitizeText(parsed.serving_temp, 100),
+      decant_time: sanitizeText(parsed.decant_time, 100),
+      drinking_window: sanitizeText(parsed.drinking_window, 100),
+      created_by: user.id,
+    };
+
     const { data: insertedWine, error: insertError } = await supabase
       .from("wines")
-      .insert({
-        producer,
-        name,
-        vintage,
-        wine_type: wineType,
-        region: parsed.region ?? null,
-        sub_region: parsed.sub_region ?? null,
-        country: parsed.country ?? null,
-        appellation: parsed.appellation ?? null,
-        varietals: Array.isArray(parsed.varietals) ? parsed.varietals : [],
-        abv: typeof parsed.abv === "number" ? parsed.abv : null,
-        body: parsed.body ?? null,
-        tannin: parsed.tannin ?? null,
-        acidity: parsed.acidity ?? null,
-        sweetness: parsed.sweetness ?? null,
-        tasting_notes: Array.isArray(parsed.tasting_notes) ? parsed.tasting_notes : [],
-        summary: parsed.summary ?? null,
-        food_pairings: Array.isArray(parsed.food_pairings) ? parsed.food_pairings : [],
-        serving_temp: parsed.serving_temp ?? null,
-        decant_time: parsed.decant_time ?? null,
-        drinking_window: parsed.drinking_window ?? null,
-        created_by: user.id,
-      })
+      .insert(sanitizedWine)
       .select("*")
       .single();
 
     if (insertError) {
       return new Response(
-        JSON.stringify({ wine: parsed, cached: false, warning: insertError.message }),
+        JSON.stringify({ wine: sanitizedWine, cached: false }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -269,7 +341,7 @@ Deno.serve(async (req: Request) => {
   } catch (err) {
     console.error("Unhandled Edge Function exception:", err);
     return new Response(
-      JSON.stringify({ error: err instanceof Error ? err.message : "Unknown error" }),
+      JSON.stringify({ error: "Unable to process wine label right now." }),
       {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

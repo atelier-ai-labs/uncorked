@@ -21,8 +21,22 @@ export function AuthScreen() {
   );
 
   const handleAuth = async () => {
-    if (!email.trim() || !password.trim()) {
+    const trimmedEmail = email.trim().toLowerCase();
+    if (!trimmedEmail || !password) {
       setMessage({ text: 'Please enter both email and password.', isError: true });
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setMessage({ text: 'Please enter a valid email address.', isError: true });
+      return;
+    }
+
+    if (isSignUp && password.length < 8) {
+      setMessage({
+        text: 'Password must be at least 8 characters long.',
+        isError: true,
+      });
       return;
     }
 
@@ -32,7 +46,7 @@ export function AuthScreen() {
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
+          email: trimmedEmail,
           password,
         });
         if (error) throw error;
@@ -44,14 +58,18 @@ export function AuthScreen() {
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
+          email: trimmedEmail,
           password,
         });
         if (error) throw error;
       }
     } catch (err) {
       setMessage({
-        text: err instanceof Error ? err.message : 'Authentication failed',
+        text: isSignUp
+          ? err instanceof Error
+            ? err.message
+            : 'Unable to create account.'
+          : 'Invalid email or password.',
         isError: true,
       });
     } finally {
