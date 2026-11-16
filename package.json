@@ -1,0 +1,31 @@
+{
+  "name": "uncorked",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --tunnel",
+    "android": "expo start --tunnel --android",
+    "ios": "expo start --tunnel --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@supabase/supabase-js": "2.49.1",
+    "expo": "~58.0.0",
+    "expo-image-manipulator": "~58.0.16",
+    "expo-image-picker": "~58.0.10",
+    "expo-status-bar": "~58.0.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-url-polyfill": "2.0.0",
+    "react-native-web": "^0.21.4"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@types/react": "^19.0.10",
+    "typescript": "~5.8.3"
+  },
+  "private": true
+}
