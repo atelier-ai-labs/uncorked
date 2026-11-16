@@ -37,12 +37,26 @@ const SOMMELIER_PROMPT = `You are an expert Master Sommelier. Inspect this wine 
 function findGeminiKey(): string | null {
   const candidates = [
     Deno.env.get("GEMINI_API_KEY"),
+    Deno.env.get("EXPO_PUBLIC_GEMINI_API_KEY"),
     Deno.env.get("GOOGLE_API_KEY"),
     Deno.env.get("GEMINI_KEY"),
   ];
   for (const val of candidates) {
     if (val && val.trim()) {
       return val.trim().replace(/^["']|["']$/g, "");
+    }
+  }
+  const envObj = Deno.env.toObject();
+  for (const [k, v] of Object.entries(envObj)) {
+    const upper = k.trim().toUpperCase();
+    if (
+      !upper.startsWith("SUPABASE_") &&
+      !upper.startsWith("DENO_") &&
+      (upper.includes("GEMINI") || upper.includes("GOOGLE") || upper.includes("AIza") || v.trim().startsWith("AIza")) &&
+      v &&
+      v.trim()
+    ) {
+      return v.trim().replace(/^["']|["']$/g, "");
     }
   }
   return null;
