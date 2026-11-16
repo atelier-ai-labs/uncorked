@@ -63,8 +63,8 @@ export function ScanBottleModal({
   const [abv, setAbv] = useState('');
   const [profile, setProfile] = useState<ExtractedWineProfile | null>(null);
 
-  // Personal Tasting Log Fields
-  const [rating, setRating] = useState(4.2);
+  // Personal Tasting Log Fields (default rating to null until the user has tasted & scored the wine)
+  const [rating, setRating] = useState<number | null>(null);
   const [pricePaid, setPricePaid] = useState('');
   const [purchaseLocation, setPurchaseLocation] = useState('');
   const [bottlesOnHand, setBottlesOnHand] = useState(1);
@@ -87,7 +87,7 @@ export function ScanBottleModal({
     setVarietals('');
     setAbv('');
     setProfile(null);
-    setRating(4.2);
+    setRating(null);
     setPricePaid('');
     setPurchaseLocation('');
     setBottlesOnHand(1);

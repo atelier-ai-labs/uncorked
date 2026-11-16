@@ -25,7 +25,7 @@ export function WineDetailModal({
   onUpdated,
 }: WineDetailModalProps) {
   const [editing, setEditing] = useState(false);
-  const [rating, setRating] = useState(log?.rating ?? 4.0);
+  const [rating, setRating] = useState<number | null>(log?.rating ?? null);
   const [notes, setNotes] = useState(log?.tasting_notes ?? '');
   const [price, setPrice] = useState(
     log?.price_paid != null ? String(log.price_paid) : ''
@@ -36,7 +36,7 @@ export function WineDetailModal({
   React.useEffect(() => {
     if (log) {
       setEditing(false);
-      setRating(log.rating ?? 4.0);
+      setRating(log.rating ?? null);
       setNotes(log.tasting_notes ?? '');
       setPrice(log.price_paid != null ? String(log.price_paid) : '');
       setBottlesOnHand(log.bottles_on_hand ?? 0);

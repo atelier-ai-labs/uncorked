@@ -80,7 +80,18 @@ alter policy "bottle_photos_public_read"
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
--- 3. Server-enforced confirmation boundary for saving a reviewed wine profile + personal cellar log
+-- 3. Require transaction-local confirmation flag on public.wines INSERT policy
+-- Direct PostgREST table inserts (/rest/v1/wines) cannot set this flag and are rejected by RLS.
+alter policy "wines_insert_authenticated"
+  on public.wines
+  to authenticated
+  with check (
+    (select auth.uid()) is not null
+    and created_by = (select auth.uid())
+    and pg_catalog.current_setting('app.via_confirmed_rpc', true) = 'true'
+  );
+
+-- 4. Server-enforced confirmation boundary for saving a reviewed wine profile + personal cellar log
 create or replace function public.save_confirmed_wine_and_log(
   p_wine_id bigint default null,
   p_producer text default null,
@@ -157,6 +168,8 @@ begin
 
   -- Only insert into the shared catalog AFTER the user has reviewed & confirmed the bottle details
   if v_final_wine_id is null then
+    perform pg_catalog.set_config('app.via_confirmed_rpc', 'true', true);
+
     insert into public.wines (
       producer,
       name,

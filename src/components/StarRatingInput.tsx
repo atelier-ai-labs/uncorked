@@ -2,24 +2,30 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 interface StarRatingInputProps {
-  value: number;
-  onChange: (nextValue: number) => void;
+  value: number | null;
+  onChange: (nextValue: number | null) => void;
 }
 
 /**
- * Interactive 5.0-star wine rating picker with tenth-of-a-point (0.1) precision,
- * matching Vivino-style scoring (e.g. 4.3 / 5.0).
+ * Interactive 5.0-star wine rating picker with tenth-of-a-point (0.1) precision
+ * and an explicit "Unrated" state for bottles you haven't tasted yet.
  */
 export function StarRatingInput({ value, onChange }: StarRatingInputProps) {
-  const clamp = (num: number) => Math.max(0, Math.min(5, Math.round(num * 10) / 10));
+  const clamp = (num: number) =>
+    Math.max(0, Math.min(5, Math.round(num * 10) / 10));
+
+  const handleStep = (delta: number) => {
+    const base = value ?? 4.0;
+    onChange(clamp(base + delta));
+  };
 
   return (
     <View style={styles.container}>
       <View style={styles.topRow}>
         <View style={styles.starsRow}>
           {[1, 2, 3, 4, 5].map((star) => {
-            const filled = value >= star - 0.2;
-            const half = !filled && value >= star - 0.7;
+            const filled = value !== null && value >= star - 0.2;
+            const half = value !== null && !filled && value >= star - 0.7;
             return (
               <Pressable
                 key={star}
@@ -44,35 +50,40 @@ export function StarRatingInput({ value, onChange }: StarRatingInputProps) {
         </View>
 
         <View style={styles.scoreBadge}>
-          <Text style={styles.scoreNumber}>{value.toFixed(1)}</Text>
-          <Text style={styles.scoreMax}>/ 5.0</Text>
+          {value !== null ? (
+            <>
+              <Text style={styles.scoreNumber}>{value.toFixed(1)}</Text>
+              <Text style={styles.scoreMax}>/ 5.0</Text>
+            </>
+          ) : (
+            <Text style={styles.unratedText}>Unrated</Text>
+          )}
         </View>
       </View>
 
       <View style={styles.fineTuneRow}>
-        <Pressable
-          style={styles.stepButton}
-          onPress={() => onChange(clamp(value - 0.5))}
-        >
+        <Pressable style={styles.stepButton} onPress={() => handleStep(-0.5)}>
           <Text style={styles.stepButtonText}>-0.5</Text>
         </Pressable>
-        <Pressable
-          style={styles.stepButton}
-          onPress={() => onChange(clamp(value - 0.1))}
-        >
+        <Pressable style={styles.stepButton} onPress={() => handleStep(-0.1)}>
           <Text style={styles.stepButtonText}>-0.1</Text>
         </Pressable>
-        <Text style={styles.fineTuneHint}>Fine-tune tenth score</Text>
-        <Pressable
-          style={styles.stepButton}
-          onPress={() => onChange(clamp(value + 0.1))}
-        >
+
+        {value !== null ? (
+          <Pressable
+            style={styles.clearRatingButton}
+            onPress={() => onChange(null)}
+          >
+            <Text style={styles.clearRatingText}>Clear (Unrated)</Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.fineTuneHint}>Tap a star once tasted</Text>
+        )}
+
+        <Pressable style={styles.stepButton} onPress={() => handleStep(0.1)}>
           <Text style={styles.stepButtonText}>+0.1</Text>
         </Pressable>
-        <Pressable
-          style={styles.stepButton}
-          onPress={() => onChange(clamp(value + 0.5))}
-        >
+        <Pressable style={styles.stepButton} onPress={() => handleStep(0.5)}>
           <Text style={styles.stepButtonText}>+0.5</Text>
         </Pressable>
       </View>
@@ -135,6 +146,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginLeft: 4,
   },
+  unratedText: {
+    color: '#9C7E86',
+    fontSize: 14,
+    fontWeight: '700',
+  },
   fineTuneRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -158,5 +174,15 @@ const styles = StyleSheet.create({
     color: '#8E727A',
     fontSize: 11,
     fontWeight: '500',
+  },
+  clearRatingButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  clearRatingText: {
+    color: '#B89FA5',
+    fontSize: 11,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
 });
