@@ -120,7 +120,10 @@ function findGeminiKey(): string | null {
     if (
       !upper.startsWith("SUPABASE_") &&
       !upper.startsWith("DENO_") &&
-      (upper.includes("GEMINI") || upper.includes("GOOGLE") || upper.includes("AIza") || v.trim().startsWith("AIza")) &&
+      (upper.includes("GEMINI") ||
+        upper.includes("GOOGLE") ||
+        upper.includes("AIZA") ||
+        v.trim().startsWith("AIza")) &&
       v &&
       v.trim()
     ) {
@@ -433,12 +436,7 @@ async function callGeminiWithFallback(
   apiKey: string,
   payload: Record<string, any>
 ): Promise<any> {
-  const models = [
-    "gemini-3.8-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-flash-lite-latest",
-    "gemini-flash-latest",
-  ];
+  const models = ["gemini-3.8-flash-lite", "gemini-3.8-flash"];
 
   for (const modelName of models) {
     try {
@@ -455,13 +453,12 @@ async function callGeminiWithFallback(
       if (res.ok) {
         return await res.json();
       }
-      const errText = await res.text();
-      console.warn(`Corky model ${modelName} status ${res.status}:`, errText.slice(0, 200));
-      if (errText.includes("API_KEY_INVALID") || res.status === 403) {
+      if (res.status !== 503) {
         break;
       }
     } catch (err) {
       console.warn(`Corky model ${modelName} timeout/error:`, err);
+      break;
     }
   }
   return null;
@@ -549,19 +546,10 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const { count: recentMsgs } = await supabase
-      .from("corky_messages")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("role", "user")
-      .gte("created_at", oneHourAgo);
-
-    if ((recentMsgs ?? 0) >= MAX_MESSAGES_PER_HOUR) {
+    const geminiApiKey = findGeminiKey();
+    if (!geminiApiKey) {
       return new Response(
-        JSON.stringify({
-          error: "Corky needs a quick breather (hourly message limit reached). Try again soon!",
-        }),
+        JSON.stringify({ error: "Corky AI key is not configured on the server." }),
         {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -569,10 +557,17 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const geminiApiKey = findGeminiKey();
-    if (!geminiApiKey) {
+    // Atomic, non-deletable rate limit check + increment via Postgres RPC (ai_scan_logs)
+    const { data: allowed, error: quotaErr } = await supabase.rpc("consume_ai_quota", {
+      p_action: "corky",
+      p_max_per_hour: MAX_MESSAGES_PER_HOUR,
+    });
+
+    if (quotaErr || !allowed) {
       return new Response(
-        JSON.stringify({ error: "Corky AI key is not configured on the server." }),
+        JSON.stringify({
+          error: "Corky needs a quick breather (hourly message limit reached). Try again soon!",
+        }),
         {
           status: 200,
           headers: { ...corsHeaders, "Content-Type": "application/json" },

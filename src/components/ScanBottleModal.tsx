@@ -168,46 +168,12 @@ export function ScanBottleModal({
     setErrorMsg(null);
 
     try {
-      let finalWineId = wineId;
-
-      if (!finalWineId) {
-        const parsedVintage = vintage.trim() ? parseInt(vintage.trim(), 10) : null;
-        const parsedAbv = abv.trim() ? parseFloat(abv.trim()) : null;
-        const parsedVarietals = varietals
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean);
-
-        const { data: insertedWine, error: wineErr } = await supabase
-          .from('wines')
-          .insert({
-            producer: producer.trim(),
-            name: name.trim(),
-            vintage: Number.isNaN(parsedVintage) ? null : parsedVintage,
-            wine_type: wineType,
-            region: region.trim() || null,
-            country: country.trim() || null,
-            appellation: appellation.trim() || null,
-            varietals: parsedVarietals,
-            abv: Number.isNaN(parsedAbv) ? null : parsedAbv,
-            body: profile?.body || null,
-            tannin: profile?.tannin || null,
-            acidity: profile?.acidity || null,
-            sweetness: profile?.sweetness || null,
-            tasting_notes: profile?.tasting_notes || [],
-            summary: profile?.summary || null,
-            food_pairings: profile?.food_pairings || [],
-            serving_temp: profile?.serving_temp || null,
-            decant_time: profile?.decant_time || null,
-            drinking_window: profile?.drinking_window || null,
-            created_by: userId,
-          })
-          .select('id')
-          .single();
-
-        if (wineErr) throw wineErr;
-        finalWineId = insertedWine.id;
-      }
+      const parsedVintage = vintage.trim() ? parseInt(vintage.trim(), 10) : null;
+      const parsedAbv = abv.trim() ? parseFloat(abv.trim()) : null;
+      const parsedVarietals = varietals
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
 
       let uploadedPhotoUrl: string | null = null;
       if (photo) {
@@ -216,18 +182,48 @@ export function ScanBottleModal({
 
       const parsedPrice = pricePaid.trim() ? parseFloat(pricePaid.trim()) : null;
 
-      const { error: logErr } = await supabase.from('wine_logs').insert({
-        user_id: userId,
-        wine_id: finalWineId,
-        rating,
-        price_paid: Number.isNaN(parsedPrice) ? null : parsedPrice,
-        purchase_location: purchaseLocation.trim() || null,
-        bottles_on_hand: bottlesOnHand,
-        tasting_notes: personalNotes.trim() || null,
-        photo_url: uploadedPhotoUrl,
-      });
+      // Save confirmed bottle + personal cellar log atomically on the server
+      const { error: saveErr } = await supabase.rpc(
+        'save_confirmed_wine_and_log',
+        {
+          p_wine_id: wineId ?? null,
+          p_producer: producer.trim(),
+          p_name: name.trim(),
+          p_vintage:
+            parsedVintage === null || Number.isNaN(parsedVintage)
+              ? null
+              : parsedVintage,
+          p_wine_type: wineType,
+          p_region: region.trim() || null,
+          p_sub_region: profile?.sub_region || null,
+          p_country: country.trim() || null,
+          p_appellation: appellation.trim() || null,
+          p_varietals: parsedVarietals,
+          p_abv:
+            parsedAbv === null || Number.isNaN(parsedAbv) ? null : parsedAbv,
+          p_body: profile?.body || null,
+          p_tannin: profile?.tannin || null,
+          p_acidity: profile?.acidity || null,
+          p_sweetness: profile?.sweetness || null,
+          p_tasting_notes: profile?.tasting_notes || [],
+          p_summary: profile?.summary || null,
+          p_food_pairings: profile?.food_pairings || [],
+          p_serving_temp: profile?.serving_temp || null,
+          p_decant_time: profile?.decant_time || null,
+          p_drinking_window: profile?.drinking_window || null,
+          p_rating: rating,
+          p_price_paid:
+            parsedPrice === null || Number.isNaN(parsedPrice)
+              ? null
+              : parsedPrice,
+          p_purchase_location: purchaseLocation.trim() || null,
+          p_bottles_on_hand: bottlesOnHand,
+          p_personal_notes: personalNotes.trim() || null,
+          p_photo_url: uploadedPhotoUrl,
+        }
+      );
 
-      if (logErr) throw logErr;
+      if (saveErr) throw saveErr;
 
       resetForm();
       onSaved();

@@ -1,6 +1,6 @@
 import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from './supabase';
-import { ExtractedWineProfile } from '../types/database';
+import { ExtractedWineProfile, WineLog } from '../types/database';
 
 export interface CompressedPhoto {
   uri: string;
@@ -11,6 +11,7 @@ export interface CompressedPhoto {
 const MAX_BASE64_LENGTH = 4_000_000; // ~3 MB max
 const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const BUCKET_MARKER = '/bottle-photos/';
 
 /**
  * Resize and compress a camera/gallery photo to ~1024px width JPEG (0.75 quality).
@@ -44,7 +45,7 @@ export async function compressBottlePhoto(uri: string): Promise<CompressedPhoto>
 
 /**
  * Analyze a wine bottle label strictly via the authenticated Supabase Edge Function
- * (`analyze-wine-label`) so the Gemini API key is never exposed in the mobile client bundle.
+ * (`analyze-wine-label`). Returns a proposed wine profile for user review/confirmation.
  */
 export async function analyzeWineLabel(
   photo: CompressedPhoto
@@ -75,7 +76,7 @@ export async function analyzeWineLabel(
 }
 
 /**
- * Upload compressed JPEG to Supabase Storage `bottle-photos/{userId}/{timestamp}.jpg`
+ * Upload compressed JPEG to private Supabase Storage bucket `bottle-photos/{userId}/{timestamp}.jpg`
  */
 export async function uploadBottlePhoto(
   userId: string,
@@ -105,10 +106,62 @@ export async function uploadBottlePhoto(
       return null;
     }
 
+    // Store canonical bucket reference URL (validated by DB CHECK constraint);
+    // since the bucket is private, resolveSignedBottlePhotoUrls() exchanges it for a short-lived signed URL on read.
     const { data } = supabase.storage.from('bottle-photos').getPublicUrl(filePath);
     return data.publicUrl;
   } catch (err) {
     console.warn('Photo upload skipped:', err);
     return null;
   }
+}
+
+/**
+ * Extract private storage object paths from wine logs and batch-resolve short-lived signed URLs (1 hour TTL).
+ */
+export async function resolveSignedBottlePhotoUrls(
+  logs: WineLog[]
+): Promise<WineLog[]> {
+  const pathEntries: { index: number; objectPath: string }[] = [];
+
+  logs.forEach((log, idx) => {
+    if (!log.photo_url) return;
+    const markerIdx = log.photo_url.indexOf(BUCKET_MARKER);
+    if (markerIdx !== -1) {
+      const rawPath = log.photo_url
+        .slice(markerIdx + BUCKET_MARKER.length)
+        .split('?')[0];
+      if (rawPath) {
+        pathEntries.push({ index: idx, objectPath: rawPath });
+      }
+    }
+  });
+
+  if (pathEntries.length === 0) {
+    return logs;
+  }
+
+  const { data: signedList, error } = await supabase.storage
+    .from('bottle-photos')
+    .createSignedUrls(
+      pathEntries.map((e) => e.objectPath),
+      3600
+    );
+
+  if (error || !signedList) {
+    return logs;
+  }
+
+  const nextLogs = [...logs];
+  signedList.forEach((item, i) => {
+    if (item.signedUrl) {
+      const logIdx = pathEntries[i].index;
+      nextLogs[logIdx] = {
+        ...nextLogs[logIdx],
+        photo_url: item.signedUrl,
+      };
+    }
+  });
+
+  return nextLogs;
 }

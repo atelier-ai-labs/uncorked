@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/lib/supabase';
+import { resolveSignedBottlePhotoUrls } from './src/lib/wineVision';
 import { WineLog, WineType } from './src/types/database';
 import { AuthScreen } from './src/components/AuthScreen';
 import { CorkyChatDrawer } from './src/components/CorkyChatDrawer';
@@ -73,7 +74,10 @@ export default function App() {
         .order('created_at', { ascending: false });
 
       if (!error && data) {
-        setLogs(data as unknown as WineLog[]);
+        const withSignedPhotos = await resolveSignedBottlePhotoUrls(
+          data as unknown as WineLog[]
+        );
+        setLogs(withSignedPhotos);
       }
     } finally {
       setLoadingLogs(false);

@@ -52,7 +52,10 @@ function findGeminiKey(): string | null {
     if (
       !upper.startsWith("SUPABASE_") &&
       !upper.startsWith("DENO_") &&
-      (upper.includes("GEMINI") || upper.includes("GOOGLE") || upper.includes("AIza") || v.trim().startsWith("AIza")) &&
+      (upper.includes("GEMINI") ||
+        upper.includes("GOOGLE") ||
+        upper.includes("AIZA") ||
+        v.trim().startsWith("AIza")) &&
       v &&
       v.trim()
     ) {
@@ -156,26 +159,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Per-user sliding window rate limit (max 25 AI scans per hour)
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const { count: recentScans, error: rateErr } = await supabase
-      .from("ai_scan_logs")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .gte("created_at", oneHourAgo);
-
-    if (!rateErr && (recentScans ?? 0) >= MAX_SCANS_PER_HOUR) {
-      return new Response(
-        JSON.stringify({
-          error: `Hourly scan limit reached (${MAX_SCANS_PER_HOUR} scans/hour). Please try again shortly.`,
-        }),
-        {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
     const geminiApiKey = findGeminiKey();
     if (!geminiApiKey) {
       console.error("Missing GEMINI_API_KEY secret in Edge Function.");
@@ -191,15 +174,26 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Record the scan event for rate-limiting before invoking Gemini
-    await supabase.from("ai_scan_logs").insert({ user_id: user.id });
+    // Atomic, advisory-locked rate limit check + increment via Postgres RPC
+    const { data: allowed, error: quotaErr } = await supabase.rpc("consume_ai_quota", {
+      p_action: "scan",
+      p_max_per_hour: MAX_SCANS_PER_HOUR,
+    });
 
-    const modelsToTry = [
-      "gemini-3.8-flash-lite",
-      "gemini-3.8-flash",
-      "gemini-flash-lite-latest",
-      "gemini-flash-latest",
-    ];
+    if (quotaErr || !allowed) {
+      return new Response(
+        JSON.stringify({
+          error: `Hourly scan limit reached (${MAX_SCANS_PER_HOUR} scans/hour). Please try again shortly.`,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Single primary model call, only falling back once if Google returns 503 Unavailable
+    const modelsToTry = ["gemini-3.8-flash-lite", "gemini-3.8-flash"];
     let geminiJson: any = null;
 
     for (const modelName of modelsToTry) {
@@ -235,15 +229,12 @@ Deno.serve(async (req: Request) => {
         if (geminiRes.ok) {
           geminiJson = await geminiRes.json();
           break;
-        } else {
-          const errText = await geminiRes.text();
-          console.warn(`Model ${modelName} returned ${geminiRes.status}`);
-          if (errText.includes("API_KEY_INVALID") || geminiRes.status === 403) {
-            break;
-          }
+        } else if (geminiRes.status !== 503) {
+          break;
         }
       } catch (fetchErr) {
         console.warn(`Model ${modelName} timed out:`, fetchErr);
+        break;
       }
     }
 
@@ -290,7 +281,6 @@ Deno.serve(async (req: Request) => {
         ? Math.round(rawAbv * 100) / 100
         : null;
 
-    // Escape ILIKE wildcards (% and _) before querying shared catalog
     let query = supabase
       .from("wines")
       .select("*")
@@ -311,7 +301,8 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const sanitizedWine = {
+    // Return proposed profile without persisting to public.wines until user confirms
+    const proposedWine = {
       producer,
       name,
       vintage,
@@ -332,24 +323,10 @@ Deno.serve(async (req: Request) => {
       serving_temp: sanitizeText(parsed.serving_temp, 100),
       decant_time: sanitizeText(parsed.decant_time, 100),
       drinking_window: sanitizeText(parsed.drinking_window, 100),
-      created_by: user.id,
     };
 
-    const { data: insertedWine, error: insertError } = await supabase
-      .from("wines")
-      .insert(sanitizedWine)
-      .select("*")
-      .single();
-
-    if (insertError) {
-      return new Response(
-        JSON.stringify({ wine: sanitizedWine, cached: false }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     return new Response(
-      JSON.stringify({ wine: insertedWine, cached: false }),
+      JSON.stringify({ wine: proposedWine, cached: false }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
