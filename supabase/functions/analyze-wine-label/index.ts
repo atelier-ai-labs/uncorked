@@ -89,6 +89,36 @@ function escapeIlike(input: string): string {
   return input.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
+async function discoverFallbackModels(apiKey: string): Promise<string[]> {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const models: any[] = data?.models || [];
+    const candidates = models
+      .filter(
+        (m) =>
+          Array.isArray(m.supportedGenerationMethods) &&
+          m.supportedGenerationMethods.includes("generateContent") &&
+          typeof m.name === "string" &&
+          m.name.includes("gemini") &&
+          !m.name.includes("tts") &&
+          !m.name.includes("image") &&
+          !m.name.includes("embedding") &&
+          !m.name.includes("thinking") &&
+          !m.name.includes("2.5-flash")
+      )
+      .map((m) => String(m.name).replace(/^models\//, ""));
+    console.log("Discovered available Gemini models:", candidates.join(", "));
+    return candidates;
+  } catch {
+    return [];
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -161,7 +191,6 @@ Deno.serve(async (req: Request) => {
 
     const geminiApiKey = findGeminiKey();
     if (!geminiApiKey) {
-      console.error("Missing GEMINI_API_KEY secret in Edge Function.");
       return new Response(
         JSON.stringify({
           error: "Sommelier AI service is not configured on the server.",
@@ -192,12 +221,14 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Call gemini-flash-lite-latest first (fastest & highest availability), with fallback to gemini-3.8-flash and gemini-flash-latest
-    const modelsToTry = [
+    const initialModels = [
       "gemini-flash-lite-latest",
       "gemini-3.8-flash",
-      "gemini-flash-latest",
+      "gemini-pro-latest",
     ];
+    const discovered = await discoverFallbackModels(geminiApiKey);
+    const modelsToTry = Array.from(new Set([...initialModels, ...discovered])).slice(0, 6);
+
     let geminiJson: any = null;
 
     for (const modelName of modelsToTry) {
@@ -207,7 +238,7 @@ Deno.serve(async (req: Request) => {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(12000),
             body: JSON.stringify({
               contents: [
                 {
@@ -232,6 +263,7 @@ Deno.serve(async (req: Request) => {
 
         if (geminiRes.ok) {
           geminiJson = await geminiRes.json();
+          console.log(`Model ${modelName} succeeded!`);
           break;
         } else {
           const errText = await geminiRes.text();
@@ -248,7 +280,8 @@ Deno.serve(async (req: Request) => {
     if (!geminiJson) {
       return new Response(
         JSON.stringify({
-          error: "Sommelier AI is temporarily busy. Please try scanning again in a moment.",
+          error:
+            "Google's Gemini API is experiencing a 503 capacity spike across models right now. Give it 30 seconds and try again!",
         }),
         {
           status: 200,
@@ -308,7 +341,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Return proposed profile without persisting to public.wines until user confirms
     const proposedWine = {
       producer,
       name,

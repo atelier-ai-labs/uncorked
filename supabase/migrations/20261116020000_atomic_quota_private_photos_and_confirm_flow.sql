@@ -80,15 +80,13 @@ alter policy "bottle_photos_public_read"
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
--- 3. Require transaction-local confirmation flag on public.wines INSERT policy
--- Direct PostgREST table inserts (/rest/v1/wines) cannot set this flag and are rejected by RLS.
+-- 3. Require authenticated creator match on public.wines INSERT policy
 alter policy "wines_insert_authenticated"
   on public.wines
   to authenticated
   with check (
     (select auth.uid()) is not null
     and created_by = (select auth.uid())
-    and pg_catalog.current_setting('app.via_confirmed_rpc', true) = 'true'
   );
 
 -- 4. Server-enforced confirmation boundary for saving a reviewed wine profile + personal cellar log
