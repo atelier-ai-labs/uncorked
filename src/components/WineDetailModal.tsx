@@ -30,6 +30,7 @@ export function WineDetailModal({
   const [price, setPrice] = useState(
     log?.price_paid != null ? String(log.price_paid) : ''
   );
+  const [bottlesOnHand, setBottlesOnHand] = useState(log?.bottles_on_hand ?? 0);
   const [saving, setSaving] = useState(false);
 
   React.useEffect(() => {
@@ -38,6 +39,7 @@ export function WineDetailModal({
       setRating(log.rating ?? 4.0);
       setNotes(log.tasting_notes ?? '');
       setPrice(log.price_paid != null ? String(log.price_paid) : '');
+      setBottlesOnHand(log.bottles_on_hand ?? 0);
     }
   }, [log]);
 
@@ -54,6 +56,7 @@ export function WineDetailModal({
           rating,
           tasting_notes: notes.trim() || null,
           price_paid: Number.isNaN(parsedPrice) ? null : parsedPrice,
+          bottles_on_hand: bottlesOnHand,
           updated_at: new Date().toISOString(),
         })
         .eq('id', log.id);
@@ -181,6 +184,13 @@ export function WineDetailModal({
                       </Text>
                     </View>
                   )}
+
+                  <View style={styles.metaBox}>
+                    <Text style={styles.metaLabel}>IN CELLAR</Text>
+                    <Text style={styles.metaValue}>
+                      {log.bottles_on_hand ?? 0} on hand
+                    </Text>
+                  </View>
 
                   <View style={styles.metaBox}>
                     <Text style={styles.metaLabel}>LOGGED ON</Text>

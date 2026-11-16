@@ -17,6 +17,7 @@ import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/lib/supabase';
 import { WineLog, WineType } from './src/types/database';
 import { AuthScreen } from './src/components/AuthScreen';
+import { CorkyChatDrawer } from './src/components/CorkyChatDrawer';
 import { ScanBottleModal } from './src/components/ScanBottleModal';
 import { WineDetailModal } from './src/components/WineDetailModal';
 
@@ -43,6 +44,7 @@ export default function App() {
   const [sortBy, setSortBy] = useState<SortOption>('recent');
 
   const [scanModalOpen, setScanModalOpen] = useState(false);
+  const [corkyDrawerOpen, setCorkyDrawerOpen] = useState(false);
   const [selectedLog, setSelectedLog] = useState<WineLog | null>(null);
 
   useEffect(() => {
@@ -357,20 +359,36 @@ export default function App() {
         }}
       />
 
-      {/* Floating Action Button to Scan Bottle */}
-      <Pressable
-        style={styles.fab}
-        onPress={() => setScanModalOpen(true)}
-      >
-        <Text style={styles.fabIcon}>📷</Text>
-        <Text style={styles.fabText}>Scan Bottle</Text>
-      </Pressable>
+      {/* Floating Action Bar: Scan Bottle + Ask Corky */}
+      <View style={styles.fabRow}>
+        <Pressable
+          style={styles.fab}
+          onPress={() => setScanModalOpen(true)}
+        >
+          <Text style={styles.fabIcon}>📷</Text>
+          <Text style={styles.fabText}>Scan Bottle</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.corkyFab}
+          onPress={() => setCorkyDrawerOpen(true)}
+        >
+          <Text style={styles.fabIcon}>🍷</Text>
+          <Text style={styles.corkyFabText}>Ask Corky</Text>
+        </Pressable>
+      </View>
 
       <ScanBottleModal
         visible={scanModalOpen}
         userId={session.user.id}
         onClose={() => setScanModalOpen(false)}
         onSaved={fetchCellarLogs}
+      />
+
+      <CorkyChatDrawer
+        visible={corkyDrawerOpen}
+        userId={session.user.id}
+        onClose={() => setCorkyDrawerOpen(false)}
       />
 
       <WineDetailModal
@@ -655,19 +673,36 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
-  fab: {
+  fabRow: {
     position: 'absolute',
     bottom: 26,
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+  },
+  fab: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
     backgroundColor: '#9E2A3A',
-    paddingHorizontal: 24,
+    paddingHorizontal: 20,
     paddingVertical: 15,
     borderRadius: 30,
     borderWidth: 1,
     borderColor: '#D65A6B',
+    elevation: 6,
+  },
+  corkyFab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#24141B',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderRadius: 30,
+    borderWidth: 1.5,
+    borderColor: '#E5A93C',
     elevation: 6,
   },
   fabIcon: {
@@ -675,7 +710,12 @@ const styles = StyleSheet.create({
   },
   fabText: {
     color: '#FFF8F5',
-    fontSize: 16,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  corkyFabText: {
+    color: '#E5A93C',
+    fontSize: 15,
     fontWeight: '800',
   },
 });

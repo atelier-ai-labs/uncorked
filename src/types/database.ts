@@ -44,6 +44,7 @@ export interface WineLog {
   currency: string;
   purchase_location: string | null;
   photo_url: string | null;
+  bottles_on_hand: number;
   drank_at: string;
   created_at: string;
   updated_at: string;
@@ -72,4 +73,13 @@ export interface ExtractedWineProfile {
   serving_temp: string | null;
   decant_time: string | null;
   drinking_window: string | null;
+}
+
+export interface CorkyMessage {
+  id: number | string;
+  user_id?: string;
+  role: 'user' | 'assistant';
+  content: string;
+  tools_used: string[];
+  created_at: string;
 }

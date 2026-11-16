@@ -67,6 +67,7 @@ export function ScanBottleModal({
   const [rating, setRating] = useState(4.2);
   const [pricePaid, setPricePaid] = useState('');
   const [purchaseLocation, setPurchaseLocation] = useState('');
+  const [bottlesOnHand, setBottlesOnHand] = useState(1);
   const [personalNotes, setPersonalNotes] = useState('');
 
   const resetForm = () => {
@@ -89,6 +90,7 @@ export function ScanBottleModal({
     setRating(4.2);
     setPricePaid('');
     setPurchaseLocation('');
+    setBottlesOnHand(1);
     setPersonalNotes('');
   };
 
@@ -220,6 +222,7 @@ export function ScanBottleModal({
         rating,
         price_paid: Number.isNaN(parsedPrice) ? null : parsedPrice,
         purchase_location: purchaseLocation.trim() || null,
+        bottles_on_hand: bottlesOnHand,
         tasting_notes: personalNotes.trim() || null,
         photo_url: uploadedPhotoUrl,
       });
@@ -429,6 +432,29 @@ export function ScanBottleModal({
                   value={purchaseLocation}
                   onChangeText={setPurchaseLocation}
                 />
+              </View>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Bottles On Hand in Cellar (for Corky Pairings)</Text>
+              <View style={styles.twoColRow}>
+                <Pressable
+                  style={styles.retakeButton}
+                  onPress={() => setBottlesOnHand(Math.max(0, bottlesOnHand - 1))}
+                >
+                  <Text style={styles.retakeButtonText}>− 1</Text>
+                </Pressable>
+                <View style={{ justifyContent: 'center', paddingHorizontal: 12 }}>
+                  <Text style={{ color: '#FAF3F0', fontSize: 16, fontWeight: '800' }}>
+                    {bottlesOnHand} {bottlesOnHand === 1 ? 'bottle' : 'bottles'} on hand
+                  </Text>
+                </View>
+                <Pressable
+                  style={styles.retakeButton}
+                  onPress={() => setBottlesOnHand(Math.min(100, bottlesOnHand + 1))}
+                >
+                  <Text style={styles.retakeButtonText}>+ 1</Text>
+                </Pressable>
               </View>
             </View>
 
