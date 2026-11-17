@@ -92,8 +92,8 @@ function escapeIlike(input: string): string {
 async function discoverFallbackModels(apiKey: string): Promise<string[]> {
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`,
-      { signal: AbortSignal.timeout(5000) }
+      "https://generativelanguage.googleapis.com/v1beta/models",
+      { headers: { "x-goog-api-key": apiKey }, signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) return [];
     const data = await res.json();
@@ -234,10 +234,10 @@ Deno.serve(async (req: Request) => {
     for (const modelName of modelsToTry) {
       try {
         const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "x-goog-api-key": geminiApiKey },
             signal: AbortSignal.timeout(12000),
             body: JSON.stringify({
               contents: [
