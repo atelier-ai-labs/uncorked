@@ -45,3 +45,4 @@ create policy "corky_messages_delete_own"
   on public.corky_messages for delete
   to authenticated
   using ((select auth.uid()) = user_id);
+;

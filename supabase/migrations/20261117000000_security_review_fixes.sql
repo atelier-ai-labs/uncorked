@@ -1,97 +1,14 @@
--- 1. Upgrade public.ai_scan_logs for atomic server-controlled rate limiting
-alter table public.ai_scan_logs
-  add column if not exists action text not null default 'scan';
+-- Security review fixes (2026-11-17)
 
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint where conname = 'ai_scan_logs_action_check'
-  ) then
-    alter table public.ai_scan_logs
-      add constraint ai_scan_logs_action_check
-      check (action in ('scan', 'corky'));
-  end if;
-end $$;
+-- 1. The shared catalog is written ONLY by save_confirmed_wine_and_log.
+--    The 11-16 "sync" removed the RLS flag that enforced this, so any signed-in user
+--    could POST /rest/v1/wines directly and plant entries that other users' scans
+--    and Corky's catalog tool read. Remove direct write access instead of relying on RLS.
+revoke insert, update, delete on public.wines from authenticated, anon;
+revoke usage, select on sequence public.wines_id_seq from authenticated, anon;
 
-create index if not exists ai_scan_logs_user_action_created_idx
-  on public.ai_scan_logs (user_id, action, created_at desc);
-
--- Atomic, serialized rate-limit check + increment using transaction-scoped advisory lock.
--- Because ai_scan_logs has NO UPDATE and NO DELETE RLS policies, users can never delete or reset accounting records.
-create or replace function public.consume_ai_quota(
-  p_action text,
-  p_max_per_hour int
-)
-returns boolean
-language plpgsql
-security invoker
-set search_path = ''
-as $$
-declare
-  v_user_id uuid;
-  v_recent_count int;
-begin
-  v_user_id := (select auth.uid());
-  if v_user_id is null then
-    raise exception 'Authentication required';
-  end if;
-
-  if p_action not in ('scan', 'corky') then
-    raise exception 'Invalid quota action';
-  end if;
-
-  -- Enforce fixed server limits regardless of caller parameter
-  p_max_per_hour := case when p_action = 'scan' then 25 else 40 end;
-
-  perform pg_advisory_xact_lock(hashtext(v_user_id::text || ':' || p_action));
-
-  select count(*)
-    into v_recent_count
-    from public.ai_scan_logs
-   where user_id = v_user_id
-     and action = p_action
-     and created_at >= (now() - interval '1 hour');
-
-  if v_recent_count >= p_max_per_hour then
-    return false;
-  end if;
-
-  insert into public.ai_scan_logs (user_id, action)
-  values (v_user_id, p_action);
-
-  return true;
-end;
-$$;
-
-revoke all on function public.consume_ai_quota(text, int) from public, anon;
-grant execute on function public.consume_ai_quota(text, int) to authenticated;
-
--- 2. Make bottle-photos Storage bucket private and restrict SELECT to owner only
-update storage.buckets
-   set public = false
- where id = 'bottle-photos';
-
-alter policy "bottle_photos_public_read"
-  on storage.objects
-  to authenticated
-  using (
-    bucket_id = 'bottle-photos'
-    and array_length(storage.foldername(name), 1) = 1
-    and (storage.foldername(name))[1] = (select auth.uid())::text
-  );
-
--- 3. Require transaction-local confirmation flag on public.wines INSERT policy
--- Direct PostgREST table inserts (/rest/v1/wines) cannot set this flag and are rejected by RLS.
-alter policy "wines_insert_authenticated"
-  on public.wines
-  to authenticated
-  with check (
-    (select auth.uid()) is not null
-    and created_by = (select auth.uid())
-    and pg_catalog.current_setting('app.via_confirmed_rpc', true) = 'true'
-  );
-
--- 4. Server-enforced confirmation boundary for saving a reviewed wine profile + personal cellar log
+-- The save function now runs with the owner's rights so it can still insert.
+-- auth.uid() still returns the caller; search_path stays pinned to ''.
 create or replace function public.save_confirmed_wine_and_log(
   p_wine_id bigint default null,
   p_producer text default null,
@@ -123,7 +40,7 @@ create or replace function public.save_confirmed_wine_and_log(
 )
 returns bigint
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $$
 declare
@@ -143,6 +60,13 @@ begin
 
   if v_clean_producer = '' or v_clean_name = '' then
     raise exception 'Producer and wine name are required';
+  end if;
+
+  -- Runs with owner rights (security definer), so check here what RLS used to check:
+  -- a photo must sit in the caller's own folder of the bottle-photos bucket.
+  if p_photo_url is not null
+     and position(('/bottle-photos/' || v_user_id::text || '/') in p_photo_url) = 0 then
+    raise exception 'Photo must belong to the signed-in user';
   end if;
 
   if p_wine_id is not null then
@@ -168,7 +92,6 @@ begin
 
   -- Only insert into the shared catalog AFTER the user has reviewed & confirmed the bottle details
   if v_final_wine_id is null then
-    perform pg_catalog.set_config('app.via_confirmed_rpc', 'true', true);
 
     insert into public.wines (
       producer,
@@ -256,3 +179,32 @@ grant execute on function public.save_confirmed_wine_and_log(
   text, text, text, text, text[], text, text[], text, text, text,
   numeric, numeric, text, int, text, text
 ) to authenticated;
+
+-- 2. Catalog search in the database (Corky's search_global_catalog used to load the
+--    50 newest wines and filter them in memory, so older wines were never found).
+create or replace function public.search_wine_catalog(
+  p_query text default null,
+  p_wine_type text default null,
+  p_limit int default 10
+)
+returns setof public.wines
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select w.*
+    from public.wines w
+   where (nullif(btrim(p_wine_type), '') is null or w.wine_type = lower(btrim(p_wine_type)))
+     and (
+       nullif(btrim(p_query), '') is null
+       or concat_ws(' ', w.producer, w.name, w.region, w.sub_region, w.country, w.appellation,
+                    array_to_string(w.varietals, ' '), array_to_string(w.tasting_notes, ' '))
+          ilike '%' || replace(replace(replace(left(btrim(p_query), 100), '\', '\\'), '%', '\%'), '_', '\_') || '%'
+     )
+   order by w.created_at desc
+   limit least(greatest(coalesce(p_limit, 10), 1), 25);
+$$;
+
+revoke all on function public.search_wine_catalog(text, text, int) from public, anon;
+grant execute on function public.search_wine_catalog(text, text, int) to authenticated;
