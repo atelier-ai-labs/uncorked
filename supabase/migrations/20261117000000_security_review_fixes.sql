@@ -4,8 +4,8 @@
 --    The 11-16 "sync" removed the RLS flag that enforced this, so any signed-in user
 --    could POST /rest/v1/wines directly and plant entries that other users' scans
 --    and Corky's catalog tool read. Remove direct write access instead of relying on RLS.
-revoke insert, update, delete on public.wines from authenticated;
-revoke usage, select on sequence public.wines_id_seq from authenticated;
+revoke insert, update, delete on public.wines from authenticated, anon;
+revoke usage, select on sequence public.wines_id_seq from authenticated, anon;
 
 -- The save function now runs with the owner's rights so it can still insert.
 -- auth.uid() still returns the caller; search_path stays pinned to ''.
