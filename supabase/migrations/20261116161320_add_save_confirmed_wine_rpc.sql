@@ -1,95 +1,4 @@
--- 1. Upgrade public.ai_scan_logs for atomic server-controlled rate limiting
-alter table public.ai_scan_logs
-  add column if not exists action text not null default 'scan';
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_constraint where conname = 'ai_scan_logs_action_check'
-  ) then
-    alter table public.ai_scan_logs
-      add constraint ai_scan_logs_action_check
-      check (action in ('scan', 'corky'));
-  end if;
-end $$;
-
-create index if not exists ai_scan_logs_user_action_created_idx
-  on public.ai_scan_logs (user_id, action, created_at desc);
-
--- Atomic, serialized rate-limit check + increment using transaction-scoped advisory lock.
--- Because ai_scan_logs has NO UPDATE and NO DELETE RLS policies, users can never delete or reset accounting records.
-create or replace function public.consume_ai_quota(
-  p_action text,
-  p_max_per_hour int
-)
-returns boolean
-language plpgsql
-security invoker
-set search_path = ''
-as $$
-declare
-  v_user_id uuid;
-  v_recent_count int;
-begin
-  v_user_id := (select auth.uid());
-  if v_user_id is null then
-    raise exception 'Authentication required';
-  end if;
-
-  if p_action not in ('scan', 'corky') then
-    raise exception 'Invalid quota action';
-  end if;
-
-  -- Enforce fixed server limits regardless of caller parameter
-  p_max_per_hour := case when p_action = 'scan' then 25 else 40 end;
-
-  perform pg_advisory_xact_lock(hashtext(v_user_id::text || ':' || p_action));
-
-  select count(*)
-    into v_recent_count
-    from public.ai_scan_logs
-   where user_id = v_user_id
-     and action = p_action
-     and created_at >= (now() - interval '1 hour');
-
-  if v_recent_count >= p_max_per_hour then
-    return false;
-  end if;
-
-  insert into public.ai_scan_logs (user_id, action)
-  values (v_user_id, p_action);
-
-  return true;
-end;
-$$;
-
-revoke all on function public.consume_ai_quota(text, int) from public, anon;
-grant execute on function public.consume_ai_quota(text, int) to authenticated;
-
--- 2. Make bottle-photos Storage bucket private and restrict SELECT to owner only
-update storage.buckets
-   set public = false
- where id = 'bottle-photos';
-
-alter policy "bottle_photos_public_read"
-  on storage.objects
-  to authenticated
-  using (
-    bucket_id = 'bottle-photos'
-    and array_length(storage.foldername(name), 1) = 1
-    and (storage.foldername(name))[1] = (select auth.uid())::text
-  );
-
--- 3. Require authenticated creator match on public.wines INSERT policy
-alter policy "wines_insert_authenticated"
-  on public.wines
-  to authenticated
-  with check (
-    (select auth.uid()) is not null
-    and created_by = (select auth.uid())
-  );
-
--- 4. Server-enforced confirmation boundary for saving a reviewed wine profile + personal cellar log
+-- Server-enforced confirmation boundary for saving a reviewed wine profile + personal cellar log
 create or replace function public.save_confirmed_wine_and_log(
   p_wine_id bigint default null,
   p_producer text default null,
@@ -143,6 +52,7 @@ begin
     raise exception 'Producer and wine name are required';
   end if;
 
+  -- 1. If a known catalog wine_id was passed, verify it still matches the user's confirmed producer/name/vintage
   if p_wine_id is not null then
     select w.id
       into v_final_wine_id
@@ -154,6 +64,7 @@ begin
      limit 1;
   end if;
 
+  -- 2. Otherwise check if an identical confirmed bottle already exists in public.wines
   if v_final_wine_id is null then
     select w.id
       into v_final_wine_id
@@ -164,10 +75,8 @@ begin
      limit 1;
   end if;
 
-  -- Only insert into the shared catalog AFTER the user has reviewed & confirmed the bottle details
+  -- 3. Only insert into the shared catalog AFTER the user has reviewed & confirmed the bottle details
   if v_final_wine_id is null then
-    perform pg_catalog.set_config('app.via_confirmed_rpc', 'true', true);
-
     insert into public.wines (
       producer,
       name,
@@ -217,6 +126,7 @@ begin
     returning id into v_final_wine_id;
   end if;
 
+  -- 4. Insert the personal tasting log
   insert into public.wine_logs (
     user_id,
     wine_id,
@@ -254,3 +164,4 @@ grant execute on function public.save_confirmed_wine_and_log(
   text, text, text, text, text[], text, text[], text, text, text,
   numeric, numeric, text, int, text, text
 ) to authenticated;
+;

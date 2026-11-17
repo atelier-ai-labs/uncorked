@@ -93,3 +93,4 @@ alter policy "bottle_photos_user_update"
   to authenticated
   using (false)
   with check (false);
+;

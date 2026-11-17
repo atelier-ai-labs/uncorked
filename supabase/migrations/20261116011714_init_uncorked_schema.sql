@@ -145,3 +145,4 @@ create policy "bottle_photos_user_delete"
     bucket_id = 'bottle-photos'
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
+;
