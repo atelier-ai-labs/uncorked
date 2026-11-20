@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -18,12 +18,18 @@ import {
   uploadBottlePhoto,
 } from '../lib/wineVision';
 import { supabase } from '../lib/supabase';
-import { ExtractedWineProfile, WineType } from '../types/database';
+import {
+  ExtractedWineProfile,
+  WineLogStatus,
+  WineType,
+} from '../types/database';
+import { FlavorTagPicker } from './FlavorTagPicker';
 import { StarRatingInput } from './StarRatingInput';
 
 interface ScanBottleModalProps {
   visible: boolean;
   userId: string;
+  defaultStatus?: WineLogStatus;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -41,6 +47,7 @@ const WINE_TYPES: { value: WineType; label: string }[] = [
 export function ScanBottleModal({
   visible,
   userId,
+  defaultStatus = 'cellar',
   onClose,
   onSaved,
 }: ScanBottleModalProps) {
@@ -64,13 +71,29 @@ export function ScanBottleModal({
   const [profile, setProfile] = useState<ExtractedWineProfile | null>(null);
 
   // Personal Tasting Log Fields (default rating to null until the user has tasted & scored the wine)
+  const [entryStatus, setEntryStatus] = useState<WineLogStatus>(defaultStatus);
+  const [flavorTags, setFlavorTags] = useState<string[]>([]);
   const [rating, setRating] = useState<number | null>(null);
   const [pricePaid, setPricePaid] = useState('');
   const [purchaseLocation, setPurchaseLocation] = useState('');
-  const [bottlesOnHand, setBottlesOnHand] = useState(1);
+  const [bottlesOnHand, setBottlesOnHand] = useState(
+    defaultStatus === 'cellar' ? 1 : 0
+  );
   const [personalNotes, setPersonalNotes] = useState('');
 
+  useEffect(() => {
+    if (visible) {
+      const nextStatus = defaultStatus ?? 'cellar';
+      setEntryStatus(nextStatus);
+      setBottlesOnHand(nextStatus === 'cellar' ? 1 : 0);
+      if (nextStatus === 'wishlist') {
+        setRating(null);
+      }
+    }
+  }, [visible, defaultStatus]);
+
   const resetForm = () => {
+    const nextStatus = defaultStatus ?? 'cellar';
     setPhoto(null);
     setAnalyzing(false);
     setSaving(false);
@@ -87,10 +110,12 @@ export function ScanBottleModal({
     setVarietals('');
     setAbv('');
     setProfile(null);
+    setEntryStatus(nextStatus);
+    setFlavorTags([]);
     setRating(null);
     setPricePaid('');
     setPurchaseLocation('');
-    setBottlesOnHand(1);
+    setBottlesOnHand(nextStatus === 'cellar' ? 1 : 0);
     setPersonalNotes('');
   };
 
@@ -181,9 +206,13 @@ export function ScanBottleModal({
       }
 
       const parsedPrice = pricePaid.trim() ? parseFloat(pricePaid.trim()) : null;
+      const effectiveBottlesOnHand =
+        entryStatus === 'cellar' ? Math.max(1, bottlesOnHand) : 0;
+      const effectiveRating = entryStatus === 'wishlist' ? null : rating;
+      const effectiveFlavorTags = entryStatus === 'wishlist' ? [] : flavorTags;
 
       // Save confirmed bottle + personal cellar log atomically on the server
-      const { error: saveErr } = await supabase.rpc(
+      const { data: logId, error: saveErr } = await supabase.rpc(
         'save_confirmed_wine_and_log',
         {
           p_wine_id: wineId ?? null,
@@ -211,19 +240,34 @@ export function ScanBottleModal({
           p_serving_temp: profile?.serving_temp || null,
           p_decant_time: profile?.decant_time || null,
           p_drinking_window: profile?.drinking_window || null,
-          p_rating: rating,
+          p_rating: effectiveRating,
           p_price_paid:
             parsedPrice === null || Number.isNaN(parsedPrice)
               ? null
               : parsedPrice,
           p_purchase_location: purchaseLocation.trim() || null,
-          p_bottles_on_hand: bottlesOnHand,
+          p_bottles_on_hand: effectiveBottlesOnHand,
           p_personal_notes: personalNotes.trim() || null,
           p_photo_url: uploadedPhotoUrl,
         }
       );
 
       if (saveErr) throw saveErr;
+
+      if (
+        logId &&
+        (entryStatus !== 'cellar' || effectiveFlavorTags.length > 0)
+      ) {
+        const { error: patchErr } = await supabase
+          .from('wine_logs')
+          .update({
+            status: entryStatus,
+            flavor_tags: effectiveFlavorTags.slice(0, 20),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', logId);
+        if (patchErr) throw patchErr;
+      }
 
       resetForm();
       onSaved();
@@ -402,14 +446,69 @@ export function ScanBottleModal({
             </View>
           )}
 
-          {/* Step 3: Your Rating & Tasting Notes */}
+          {/* Step 3: Log Details */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Your Rating & Notes</Text>
-            <StarRatingInput value={rating} onChange={setRating} />
+            <Text style={styles.sectionTitle}>Log Details</Text>
+
+            <View style={styles.modeSegmentedBar}>
+              {(
+                [
+                  { key: 'cellar', label: '🍾 In Cellar' },
+                  { key: 'tasted', label: '🍷 Tasted Now' },
+                  { key: 'wishlist', label: '🔖 Wishlist' },
+                ] as { key: WineLogStatus; label: string }[]
+              ).map((m) => {
+                const active = entryStatus === m.key;
+                return (
+                  <Pressable
+                    key={m.key}
+                    style={[
+                      styles.modeSegment,
+                      active && styles.modeSegmentActive,
+                    ]}
+                    onPress={() => {
+                      setEntryStatus(m.key);
+                      if (m.key === 'cellar') {
+                        setBottlesOnHand(Math.max(1, bottlesOnHand));
+                      } else if (m.key === 'tasted') {
+                        setBottlesOnHand(0);
+                      } else {
+                        setBottlesOnHand(0);
+                        setRating(null);
+                      }
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.modeSegmentText,
+                        active && styles.modeSegmentTextActive,
+                      ]}
+                    >
+                      {m.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {entryStatus !== 'wishlist' && (
+              <>
+                <StarRatingInput value={rating} onChange={setRating} />
+
+                <FlavorTagPicker
+                  wineType={wineType}
+                  selected={flavorTags}
+                  suggested={profile?.tasting_notes}
+                  onChange={setFlavorTags}
+                />
+              </>
+            )}
 
             <View style={styles.twoColRow}>
               <View style={[styles.fieldGroup, { flex: 1 }]}>
-                <Text style={styles.label}>Price Paid ($)</Text>
+                <Text style={styles.label}>
+                  {entryStatus === 'wishlist' ? 'Seen Price ($)' : 'Price Paid ($)'}
+                </Text>
                 <TextInput
                   style={styles.input}
                   placeholder="28.00"
@@ -420,7 +519,11 @@ export function ScanBottleModal({
                 />
               </View>
               <View style={[styles.fieldGroup, { flex: 1.3 }]}>
-                <Text style={styles.label}>Where Bought / Drank</Text>
+                <Text style={styles.label}>
+                  {entryStatus === 'wishlist'
+                    ? 'Where Spotted'
+                    : 'Where Bought / Drank'}
+                </Text>
                 <TextInput
                   style={styles.input}
                   placeholder="Total Wine, Bistro..."
@@ -431,34 +534,59 @@ export function ScanBottleModal({
               </View>
             </View>
 
-            <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Bottles On Hand in Cellar (for Corky Pairings)</Text>
-              <View style={styles.twoColRow}>
-                <Pressable
-                  style={styles.retakeButton}
-                  onPress={() => setBottlesOnHand(Math.max(0, bottlesOnHand - 1))}
-                >
-                  <Text style={styles.retakeButtonText}>− 1</Text>
-                </Pressable>
-                <View style={{ justifyContent: 'center', paddingHorizontal: 12 }}>
-                  <Text style={{ color: '#FAF3F0', fontSize: 16, fontWeight: '800' }}>
-                    {bottlesOnHand} {bottlesOnHand === 1 ? 'bottle' : 'bottles'} on hand
-                  </Text>
+            {entryStatus === 'cellar' && (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>
+                  Bottles On Hand in Cellar (for Corky Pairings)
+                </Text>
+                <View style={styles.twoColRow}>
+                  <Pressable
+                    style={styles.retakeButton}
+                    onPress={() =>
+                      setBottlesOnHand(Math.max(1, bottlesOnHand - 1))
+                    }
+                  >
+                    <Text style={styles.retakeButtonText}>− 1</Text>
+                  </Pressable>
+                  <View
+                    style={{ justifyContent: 'center', paddingHorizontal: 12 }}
+                  >
+                    <Text
+                      style={{
+                        color: '#FAF3F0',
+                        fontSize: 16,
+                        fontWeight: '800',
+                      }}
+                    >
+                      {bottlesOnHand}{' '}
+                      {bottlesOnHand === 1 ? 'bottle' : 'bottles'} on hand
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={styles.retakeButton}
+                    onPress={() =>
+                      setBottlesOnHand(Math.min(100, bottlesOnHand + 1))
+                    }
+                  >
+                    <Text style={styles.retakeButtonText}>+ 1</Text>
+                  </Pressable>
                 </View>
-                <Pressable
-                  style={styles.retakeButton}
-                  onPress={() => setBottlesOnHand(Math.min(100, bottlesOnHand + 1))}
-                >
-                  <Text style={styles.retakeButtonText}>+ 1</Text>
-                </Pressable>
               </View>
-            </View>
+            )}
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Personal Tasting Notes</Text>
+              <Text style={styles.label}>
+                {entryStatus === 'wishlist'
+                  ? 'Quick Note (optional)'
+                  : 'Personal Tasting Notes'}
+              </Text>
               <TextInput
                 style={[styles.input, styles.textArea]}
-                placeholder="What did you think? Velvety finish, great with steak..."
+                placeholder={
+                  entryStatus === 'wishlist'
+                    ? 'Recommended by sommelier, grab for dinner party...'
+                    : 'What did you think? Velvety finish, great with steak...'
+                }
                 placeholderTextColor="#6E555C"
                 multiline
                 value={personalNotes}
@@ -855,6 +983,34 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     marginBottom: 14,
+  },
+  modeSegmentedBar: {
+    flexDirection: 'row',
+    backgroundColor: '#12090C',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#341D25',
+    marginBottom: 14,
+    gap: 4,
+  },
+  modeSegment: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  modeSegmentActive: {
+    backgroundColor: '#9E2A3A',
+  },
+  modeSegmentText: {
+    color: '#B89FA5',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modeSegmentTextActive: {
+    color: '#FFF8F5',
+    fontWeight: '800',
   },
   typeChipsRow: {
     flexDirection: 'row',

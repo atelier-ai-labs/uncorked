@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Platform,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -16,10 +17,11 @@ import {
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/lib/supabase';
 import { resolveSignedBottlePhotoUrls } from './src/lib/wineVision';
-import { WineLog, WineType } from './src/types/database';
+import { WineLog, WineLogStatus, WineType } from './src/types/database';
 import { AuthScreen } from './src/components/AuthScreen';
 import { CorkyChatDrawer } from './src/components/CorkyChatDrawer';
 import { ScanBottleModal } from './src/components/ScanBottleModal';
+import { UncorkTastingModal } from './src/components/UncorkTastingModal';
 import { WineDetailModal } from './src/components/WineDetailModal';
 
 const FILTER_TABS: { key: 'all' | WineType; label: string }[] = [
@@ -32,7 +34,24 @@ const FILTER_TABS: { key: 'all' | WineType; label: string }[] = [
   { key: 'dessert', label: '🍯 Dessert' },
 ];
 
+const WINE_ACCENT_COLORS: Record<WineType, string> = {
+  red: '#9E2A3A',
+  white: '#D4AF37',
+  rose: '#E07A9A',
+  sparkling: '#E8C77B',
+  orange: '#D97736',
+  dessert: '#C98A3A',
+  fortified: '#7B2D4E',
+};
+
+type CollectionTab = 'cellar' | 'tasted' | 'wishlist' | 'all';
 type SortOption = 'recent' | 'rating' | 'price';
+
+function getEffectiveStatus(log: WineLog): WineLogStatus {
+  if (log.status === 'wishlist') return 'wishlist';
+  if ((log.bottles_on_hand ?? 0) > 0) return 'cellar';
+  return 'tasted';
+}
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -40,6 +59,7 @@ export default function App() {
 
   const [logs, setLogs] = useState<WineLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [collectionTab, setCollectionTab] = useState<CollectionTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState<'all' | WineType>('all');
   const [sortBy, setSortBy] = useState<SortOption>('recent');
@@ -47,6 +67,8 @@ export default function App() {
   const [scanModalOpen, setScanModalOpen] = useState(false);
   const [corkyDrawerOpen, setCorkyDrawerOpen] = useState(false);
   const [selectedLog, setSelectedLog] = useState<WineLog | null>(null);
+  const [uncorkLog, setUncorkLog] = useState<WineLog | null>(null);
+  const [quickUpdatingId, setQuickUpdatingId] = useState<number | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
@@ -90,10 +112,39 @@ export default function App() {
     }
   }, [session?.user?.id, fetchCellarLogs]);
 
+  const handleMoveWishlistToCellar = useCallback(
+    async (item: WineLog) => {
+      setQuickUpdatingId(item.id);
+      try {
+        const { error } = await supabase
+          .from('wine_logs')
+          .update({
+            status: 'cellar',
+            bottles_on_hand: 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', item.id);
+
+        if (!error) {
+          await fetchCellarLogs();
+        }
+      } finally {
+        setQuickUpdatingId(null);
+      }
+    },
+    [fetchCellarLogs]
+  );
+
   const filteredLogs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return logs
       .filter((item) => {
+        if (
+          collectionTab !== 'all' &&
+          getEffectiveStatus(item) !== collectionTab
+        ) {
+          return false;
+        }
         if (selectedType !== 'all' && item.wines?.wine_type !== selectedType) {
           return false;
         }
@@ -105,6 +156,7 @@ export default function App() {
           w?.region,
           w?.country,
           ...(w?.varietals || []),
+          ...(item.flavor_tags || []),
           item.tasting_notes,
         ]
           .filter(Boolean)
@@ -123,11 +175,30 @@ export default function App() {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         );
       });
-  }, [logs, searchQuery, selectedType, sortBy]);
+  }, [logs, collectionTab, searchQuery, selectedType, sortBy]);
 
   const stats = useMemo(() => {
-    const total = logs.length;
-    const rated = logs.filter((l) => l.rating != null);
+    let cellarCount = 0;
+    let tastedCount = 0;
+    let wishlistCount = 0;
+    let bottlesOnHandTotal = 0;
+
+    logs.forEach((l) => {
+      const s = getEffectiveStatus(l);
+      if (s === 'wishlist') {
+        wishlistCount += 1;
+      } else {
+        if (s === 'cellar') {
+          cellarCount += 1;
+        } else {
+          tastedCount += 1;
+        }
+        bottlesOnHandTotal += l.bottles_on_hand ?? 0;
+      }
+    });
+
+    const nonWishlist = logs.filter((l) => getEffectiveStatus(l) !== 'wishlist');
+    const rated = nonWishlist.filter((l) => l.rating != null);
     const avgRating =
       rated.length > 0
         ? (
@@ -136,7 +207,7 @@ export default function App() {
           ).toFixed(1)
         : '—';
     const topVarietalMap = new Map<string, number>();
-    logs.forEach((l) => {
+    nonWishlist.forEach((l) => {
       (l.wines?.varietals || []).forEach((v) => {
         topVarietalMap.set(v, (topVarietalMap.get(v) || 0) + 1);
       });
@@ -149,7 +220,18 @@ export default function App() {
         topVarietal = varietal;
       }
     });
-    return { total, avgRating, topVarietal };
+    return {
+      total: logs.length,
+      bottlesOnHandTotal,
+      avgRating,
+      topVarietal,
+      counts: {
+        cellar: cellarCount,
+        tasted: tastedCount,
+        wishlist: wishlistCount,
+        all: logs.length,
+      },
+    };
   }, [logs]);
 
   if (authLoading) {
@@ -190,8 +272,8 @@ export default function App() {
       {/* Cellar Summary Stats */}
       <View style={styles.statsBar}>
         <View style={styles.statCard}>
-          <Text style={styles.statNumber}>{stats.total}</Text>
-          <Text style={styles.statLabel}>Bottles Logged</Text>
+          <Text style={styles.statNumber}>{stats.bottlesOnHandTotal}</Text>
+          <Text style={styles.statLabel}>On Hand</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={styles.statNumber}>★ {stats.avgRating}</Text>
@@ -202,6 +284,42 @@ export default function App() {
             {stats.topVarietal}
           </Text>
           <Text style={styles.statLabel}>Top Varietal</Text>
+        </View>
+      </View>
+
+      {/* Segmented Collection Bar */}
+      <View style={styles.collectionBarWrapper}>
+        <View style={styles.collectionBar}>
+          {(
+            [
+              { key: 'cellar', label: `In Cellar (${stats.counts.cellar})` },
+              { key: 'tasted', label: `Tasted (${stats.counts.tasted})` },
+              { key: 'wishlist', label: `Wishlist (${stats.counts.wishlist})` },
+              { key: 'all', label: `All (${stats.counts.all})` },
+            ] as { key: CollectionTab; label: string }[]
+          ).map((tab) => {
+            const active = collectionTab === tab.key;
+            return (
+              <Pressable
+                key={tab.key}
+                style={[
+                  styles.collectionTab,
+                  active && styles.collectionTabActive,
+                ]}
+                onPress={() => setCollectionTab(tab.key)}
+              >
+                <Text
+                  style={[
+                    styles.collectionTabText,
+                    active && styles.collectionTabTextActive,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {tab.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
@@ -299,9 +417,14 @@ export default function App() {
         }
         renderItem={({ item }) => {
           const w = item.wines;
+          const effectiveStatus = getEffectiveStatus(item);
+          const accentColor =
+            WINE_ACCENT_COLORS[w?.wine_type as WineType] || '#9E2A3A';
+          const isUpdating = quickUpdatingId === item.id;
+
           return (
             <Pressable
-              style={styles.bottleCard}
+              style={[styles.bottleCard, { borderLeftColor: accentColor }]}
               onPress={() => setSelectedLog(item)}
             >
               {item.photo_url ? (
@@ -320,13 +443,27 @@ export default function App() {
                   <Text style={styles.bottleProducer} numberOfLines={1}>
                     {w?.producer}
                   </Text>
-                  {item.rating != null && (
-                    <View style={styles.ratingBadge}>
-                      <Text style={styles.ratingBadgeText}>
-                        ★ {Number(item.rating).toFixed(1)}
-                      </Text>
-                    </View>
-                  )}
+                  <View style={styles.cardTopBadges}>
+                    {effectiveStatus === 'cellar' && (
+                      <View style={styles.stockBadge}>
+                        <Text style={styles.stockBadgeText}>
+                          🍾 {item.bottles_on_hand} on hand
+                        </Text>
+                      </View>
+                    )}
+                    {effectiveStatus === 'wishlist' && (
+                      <View style={styles.wishlistBadge}>
+                        <Text style={styles.wishlistBadgeText}>🔖 Wishlist</Text>
+                      </View>
+                    )}
+                    {item.rating != null && (
+                      <View style={styles.ratingBadge}>
+                        <Text style={styles.ratingBadgeText}>
+                          ★ {Number(item.rating).toFixed(1)}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
                 </View>
 
                 <Text style={styles.bottleName} numberOfLines={1}>
@@ -344,19 +481,61 @@ export default function App() {
                     .join(' • ')}
                 </Text>
 
-                {item.tasting_notes ? (
-                  <Text style={styles.bottleNotes} numberOfLines={2}>
-                    “{item.tasting_notes}”
-                  </Text>
-                ) : w?.tasting_notes?.length ? (
-                  <View style={styles.miniTagsRow}>
-                    {w.tasting_notes.slice(0, 3).map((note, idx) => (
-                      <View key={idx} style={styles.miniTag}>
-                        <Text style={styles.miniTagText}>{note}</Text>
+                <View style={styles.cardBottomRow}>
+                  <View style={{ flex: 1, marginRight: 8 }}>
+                    {item.flavor_tags && item.flavor_tags.length > 0 ? (
+                      <View style={styles.miniTagsRow}>
+                        {item.flavor_tags.slice(0, 3).map((tag, idx) => (
+                          <View key={idx} style={styles.userMiniTag}>
+                            <Text style={styles.userMiniTagText}>{tag}</Text>
+                          </View>
+                        ))}
                       </View>
-                    ))}
+                    ) : item.tasting_notes ? (
+                      <Text style={styles.bottleNotes} numberOfLines={2}>
+                        “{item.tasting_notes}”
+                      </Text>
+                    ) : w?.tasting_notes?.length ? (
+                      <View style={styles.miniTagsRow}>
+                        {w.tasting_notes.slice(0, 3).map((note, idx) => (
+                          <View key={idx} style={styles.miniTag}>
+                            <Text style={styles.miniTagText}>{note}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
                   </View>
-                ) : null}
+
+                  {effectiveStatus === 'cellar' && (
+                    <Pressable
+                      style={styles.cardQuickUncorkBtn}
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        setUncorkLog(item);
+                      }}
+                    >
+                      <Text style={styles.cardQuickUncorkText}>🍾 Uncork</Text>
+                    </Pressable>
+                  )}
+
+                  {effectiveStatus === 'wishlist' && (
+                    <Pressable
+                      style={[
+                        styles.cardQuickBoughtBtn,
+                        isUpdating && { opacity: 0.5 },
+                      ]}
+                      disabled={isUpdating}
+                      onPress={(e) => {
+                        e?.stopPropagation?.();
+                        handleMoveWishlistToCellar(item);
+                      }}
+                    >
+                      <Text style={styles.cardQuickBoughtText}>
+                        {isUpdating ? '...' : '+ Bought'}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
               </View>
             </Pressable>
           );
@@ -385,6 +564,13 @@ export default function App() {
       <ScanBottleModal
         visible={scanModalOpen}
         userId={session.user.id}
+        defaultStatus={
+          collectionTab === 'wishlist'
+            ? 'wishlist'
+            : collectionTab === 'tasted'
+            ? 'tasted'
+            : 'cellar'
+        }
         onClose={() => setScanModalOpen(false)}
         onSaved={fetchCellarLogs}
       />
@@ -402,6 +588,16 @@ export default function App() {
           fetchCellarLogs();
           setSelectedLog(null);
         }}
+        onUncorkRequest={(targetLog) => {
+          setSelectedLog(null);
+          setUncorkLog(targetLog);
+        }}
+      />
+
+      <UncorkTastingModal
+        log={uncorkLog}
+        onClose={() => setUncorkLog(null)}
+        onUncorked={fetchCellarLogs}
       />
     </SafeAreaView>
   );
@@ -417,6 +613,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#12090C',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -455,7 +652,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     paddingHorizontal: 20,
-    marginBottom: 14,
+    marginBottom: 12,
+  },
+  collectionBarWrapper: {
+    paddingHorizontal: 20,
+    marginBottom: 12,
+  },
+  collectionBar: {
+    flexDirection: 'row',
+    backgroundColor: '#1A0E12',
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#2E1820',
+    gap: 4,
+  },
+  collectionTab: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  collectionTabActive: {
+    backgroundColor: '#9E2A3A',
+  },
+  collectionTabText: {
+    color: '#B89FA5',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  collectionTabTextActive: {
+    color: '#FFF8F5',
+    fontWeight: '800',
   },
   statCard: {
     flex: 1,
@@ -594,6 +823,8 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: '#2E1820',
+    borderLeftWidth: 4,
+    borderLeftColor: '#9E2A3A',
     gap: 12,
   },
   bottleThumb: {
@@ -632,6 +863,37 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
+  cardTopBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  stockBadge: {
+    backgroundColor: '#25141A',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#4A2833',
+  },
+  stockBadgeText: {
+    color: '#E6C5AC',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  wishlistBadge: {
+    backgroundColor: '#241B12',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: '#694F24',
+  },
+  wishlistBadgeText: {
+    color: '#E5A93C',
+    fontSize: 10,
+    fontWeight: '700',
+  },
   ratingBadge: {
     backgroundColor: '#29151D',
     paddingHorizontal: 8,
@@ -656,6 +918,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginBottom: 6,
   },
+  cardBottomRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
   bottleNotes: {
     color: '#D8C3C8',
     fontSize: 12,
@@ -676,6 +943,45 @@ const styles = StyleSheet.create({
     color: '#E6C5AC',
     fontSize: 10,
     fontWeight: '600',
+  },
+  userMiniTag: {
+    backgroundColor: '#241813',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#755331',
+  },
+  userMiniTagText: {
+    color: '#F3D299',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  cardQuickUncorkBtn: {
+    backgroundColor: '#9E2A3A',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#D65A6B',
+  },
+  cardQuickUncorkText: {
+    color: '#FFF8F5',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  cardQuickBoughtBtn: {
+    backgroundColor: '#241813',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5A93C',
+  },
+  cardQuickBoughtText: {
+    color: '#E5A93C',
+    fontSize: 11,
+    fontWeight: '800',
   },
   fabRow: {
     position: 'absolute',

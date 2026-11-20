@@ -7,6 +7,8 @@ export type WineType =
   | 'fortified'
   | 'orange';
 
+export type WineLogStatus = 'cellar' | 'tasted' | 'wishlist';
+
 export interface Wine {
   id: number;
   producer: string;
@@ -45,6 +47,8 @@ export interface WineLog {
   purchase_location: string | null;
   photo_url: string | null;
   bottles_on_hand: number;
+  status: WineLogStatus;
+  flavor_tags: string[];
   drank_at: string;
   created_at: string;
   updated_at: string;

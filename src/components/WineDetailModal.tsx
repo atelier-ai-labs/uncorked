@@ -10,22 +10,27 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { WineLog } from '../types/database';
+import { WineLog, WineLogStatus } from '../types/database';
+import { FlavorTagPicker } from './FlavorTagPicker';
 import { StarRatingInput } from './StarRatingInput';
 
 interface WineDetailModalProps {
   log: WineLog | null;
   onClose: () => void;
   onUpdated: () => void;
+  onUncorkRequest?: (log: WineLog) => void;
 }
 
 export function WineDetailModal({
   log,
   onClose,
   onUpdated,
+  onUncorkRequest,
 }: WineDetailModalProps) {
   const [editing, setEditing] = useState(false);
+  const [status, setStatus] = useState<WineLogStatus>('cellar');
   const [rating, setRating] = useState<number | null>(log?.rating ?? null);
+  const [flavorTags, setFlavorTags] = useState<string[]>(log?.flavor_tags ?? []);
   const [notes, setNotes] = useState(log?.tasting_notes ?? '');
   const [price, setPrice] = useState(
     log?.price_paid != null ? String(log.price_paid) : ''
@@ -35,8 +40,16 @@ export function WineDetailModal({
 
   React.useEffect(() => {
     if (log) {
+      const resolvedStatus: WineLogStatus =
+        log.status === 'wishlist'
+          ? 'wishlist'
+          : (log.bottles_on_hand ?? 0) > 0
+          ? 'cellar'
+          : 'tasted';
       setEditing(false);
+      setStatus(resolvedStatus);
       setRating(log.rating ?? null);
+      setFlavorTags(log.flavor_tags ?? []);
       setNotes(log.tasting_notes ?? '');
       setPrice(log.price_paid != null ? String(log.price_paid) : '');
       setBottlesOnHand(log.bottles_on_hand ?? 0);
@@ -45,24 +58,59 @@ export function WineDetailModal({
 
   if (!log) return null;
   const wine = log.wines;
+  const effectiveStatus: WineLogStatus =
+    log.status === 'wishlist'
+      ? 'wishlist'
+      : (log.bottles_on_hand ?? 0) > 0
+      ? 'cellar'
+      : 'tasted';
 
   const handleUpdate = async () => {
     setSaving(true);
     try {
       const parsedPrice = price.trim() ? parseFloat(price.trim()) : null;
+      const nextBottles = status === 'cellar' ? Math.max(1, bottlesOnHand) : 0;
+      const nextRating = status === 'wishlist' ? null : rating;
+      const nextTags = status === 'wishlist' ? [] : flavorTags.slice(0, 20);
+
       const { error } = await supabase
         .from('wine_logs')
         .update({
-          rating,
+          status,
+          rating: nextRating,
+          flavor_tags: nextTags,
           tasting_notes: notes.trim() || null,
           price_paid: Number.isNaN(parsedPrice) ? null : parsedPrice,
-          bottles_on_hand: bottlesOnHand,
+          bottles_on_hand: nextBottles,
           updated_at: new Date().toISOString(),
         })
         .eq('id', log.id);
 
       if (!error) {
         setEditing(false);
+        onUpdated();
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleQuickInventoryUpdate = async (
+    nextStatus: WineLogStatus,
+    nextCount: number
+  ) => {
+    setSaving(true);
+    try {
+      const { error } = await supabase
+        .from('wine_logs')
+        .update({
+          status: nextStatus,
+          bottles_on_hand: nextCount,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', log.id);
+
+      if (!error) {
         onUpdated();
       }
     } finally {
@@ -135,13 +183,173 @@ export function WineDetailModal({
             )}
           </View>
 
+          {/* Quick Actions Strip */}
+          {!editing && (
+            <View style={styles.quickActionsRow}>
+              {effectiveStatus === 'wishlist' ? (
+                <Pressable
+                  style={[styles.quickActionPrimary, saving && { opacity: 0.6 }]}
+                  onPress={() => handleQuickInventoryUpdate('cellar', 1)}
+                  disabled={saving}
+                >
+                  <Text style={styles.quickActionPrimaryText}>
+                    🍾 Bought It — Move to Cellar
+                  </Text>
+                </Pressable>
+              ) : (log.bottles_on_hand ?? 0) > 0 ? (
+                <>
+                  <Pressable
+                    style={[
+                      styles.quickActionPrimary,
+                      { flex: 1.5 },
+                      saving && { opacity: 0.6 },
+                    ]}
+                    onPress={() => onUncorkRequest?.(log)}
+                    disabled={saving}
+                  >
+                    <Text style={styles.quickActionPrimaryText}>
+                      🍾 Uncork a Bottle
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.quickActionSecondary,
+                      { flex: 1 },
+                      saving && { opacity: 0.6 },
+                    ]}
+                    onPress={() =>
+                      handleQuickInventoryUpdate(
+                        'cellar',
+                        Math.min(1000, (log.bottles_on_hand ?? 0) + 1)
+                      )
+                    }
+                    disabled={saving}
+                  >
+                    <Text style={styles.quickActionSecondaryText}>
+                      +1 Bottle
+                    </Text>
+                  </Pressable>
+                </>
+              ) : (
+                <Pressable
+                  style={[
+                    styles.quickActionSecondary,
+                    saving && { opacity: 0.6 },
+                  ]}
+                  onPress={() => handleQuickInventoryUpdate('cellar', 1)}
+                  disabled={saving}
+                >
+                  <Text style={styles.quickActionSecondaryText}>
+                    +1 Restock to Cellar
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+
           {/* Personal Tasting Log */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Your Tasting Log</Text>
+            <View style={styles.cardTitleRow}>
+              <Text style={styles.cardTitle}>Your Tasting Log</Text>
+              {!editing && (
+                <View
+                  style={[
+                    styles.statusPill,
+                    effectiveStatus === 'cellar'
+                      ? styles.statusPillCellar
+                      : effectiveStatus === 'wishlist'
+                      ? styles.statusPillWishlist
+                      : styles.statusPillTasted,
+                  ]}
+                >
+                  <Text style={styles.statusPillText}>
+                    {effectiveStatus === 'cellar'
+                      ? 'IN CELLAR'
+                      : effectiveStatus === 'wishlist'
+                      ? 'WISHLIST'
+                      : 'TASTED'}
+                  </Text>
+                </View>
+              )}
+            </View>
 
             {editing ? (
               <View style={{ gap: 12 }}>
-                <StarRatingInput value={rating} onChange={setRating} />
+                <View style={styles.modeSegmentedBar}>
+                  {(
+                    [
+                      { key: 'cellar', label: '🍾 In Cellar' },
+                      { key: 'tasted', label: '🍷 Tasted' },
+                      { key: 'wishlist', label: '🔖 Wishlist' },
+                    ] as { key: WineLogStatus; label: string }[]
+                  ).map((m) => {
+                    const active = status === m.key;
+                    return (
+                      <Pressable
+                        key={m.key}
+                        style={[
+                          styles.modeSegment,
+                          active && styles.modeSegmentActive,
+                        ]}
+                        onPress={() => {
+                          setStatus(m.key);
+                          if (m.key === 'cellar') {
+                            setBottlesOnHand(Math.max(1, bottlesOnHand));
+                          } else {
+                            setBottlesOnHand(0);
+                          }
+                        }}
+                      >
+                        <Text
+                          style={[
+                            styles.modeSegmentText,
+                            active && styles.modeSegmentTextActive,
+                          ]}
+                        >
+                          {m.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {status === 'cellar' && (
+                  <View style={styles.stepperRow}>
+                    <Text style={styles.label}>Bottles On Hand</Text>
+                    <View style={styles.stepperControls}>
+                      <Pressable
+                        style={styles.stepperButton}
+                        onPress={() =>
+                          setBottlesOnHand(Math.max(1, bottlesOnHand - 1))
+                        }
+                      >
+                        <Text style={styles.stepperButtonText}>− 1</Text>
+                      </Pressable>
+                      <Text style={styles.stepperValue}>{bottlesOnHand}</Text>
+                      <Pressable
+                        style={styles.stepperButton}
+                        onPress={() =>
+                          setBottlesOnHand(Math.min(1000, bottlesOnHand + 1))
+                        }
+                      >
+                        <Text style={styles.stepperButtonText}>+ 1</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
+
+                {status !== 'wishlist' && (
+                  <>
+                    <StarRatingInput value={rating} onChange={setRating} />
+                    <FlavorTagPicker
+                      wineType={wine.wine_type}
+                      selected={flavorTags}
+                      suggested={wine.tasting_notes}
+                      onChange={setFlavorTags}
+                    />
+                  </>
+                )}
+
                 <View>
                   <Text style={styles.label}>Price Paid ($)</Text>
                   <TextInput
@@ -197,6 +405,19 @@ export function WineDetailModal({
                     <Text style={styles.metaValue}>{log.drank_at}</Text>
                   </View>
                 </View>
+
+                {log.flavor_tags && log.flavor_tags.length > 0 && (
+                  <View style={styles.tagsSection}>
+                    <Text style={styles.subHeader}>YOUR FLAVOR TAGS</Text>
+                    <View style={styles.tagsRow}>
+                      {log.flavor_tags.map((tag, i) => (
+                        <View key={i} style={styles.userFlavorPill}>
+                          <Text style={styles.userFlavorPillText}>{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
 
                 {log.tasting_notes ? (
                   <Text style={styles.personalNotesText}>
@@ -422,6 +643,147 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 12,
+  },
+  quickActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  quickActionPrimary: {
+    flex: 1,
+    backgroundColor: '#9E2A3A',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#D65A6B',
+  },
+  quickActionPrimaryText: {
+    color: '#FFF8F5',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  quickActionSecondary: {
+    flex: 1,
+    backgroundColor: '#25141A',
+    borderRadius: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#4A2833',
+  },
+  quickActionSecondaryText: {
+    color: '#E5A93C',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  statusPill: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  statusPillCellar: {
+    backgroundColor: 'rgba(158, 42, 58, 0.25)',
+    borderColor: '#9E2A3A',
+  },
+  statusPillWishlist: {
+    backgroundColor: 'rgba(229, 169, 60, 0.16)',
+    borderColor: '#9B7228',
+  },
+  statusPillTasted: {
+    backgroundColor: '#25141A',
+    borderColor: '#4A2833',
+  },
+  statusPillText: {
+    color: '#FAF3F0',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  modeSegmentedBar: {
+    flexDirection: 'row',
+    backgroundColor: '#12090C',
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: '#341D25',
+    gap: 4,
+  },
+  modeSegment: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 9,
+    alignItems: 'center',
+  },
+  modeSegmentActive: {
+    backgroundColor: '#9E2A3A',
+  },
+  modeSegmentText: {
+    color: '#B89FA5',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modeSegmentTextActive: {
+    color: '#FFF8F5',
+    fontWeight: '800',
+  },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#12090C',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#341D25',
+  },
+  stepperControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  stepperButton: {
+    backgroundColor: '#25141A',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#4A2833',
+  },
+  stepperButtonText: {
+    color: '#E6C5AC',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  stepperValue: {
+    color: '#FAF3F0',
+    fontSize: 16,
+    fontWeight: '800',
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  userFlavorPill: {
+    backgroundColor: '#241813',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#8C6239',
+  },
+  userFlavorPillText: {
+    color: '#F3D299',
+    fontSize: 12,
+    fontWeight: '700',
   },
   ratingSummaryRow: {
     flexDirection: 'row',
