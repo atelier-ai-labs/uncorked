@@ -25,16 +25,27 @@ Turn Uncorked into a shared experience with friends while keeping personal cella
 
 ---
 
-## 2. Wishlist & Wine Shop Mode
-- **Wishlist / "Want to Try" Status**:
-  - Snap a bottle at a wine shop or restaurant without logging a tasting yet (`status: 'cellar' | 'wishlist'`).
+## 2. Corky Action Tools & Effortless Bottle Tracking
+- **Conversational Bottle Uncorking (Human-in-the-Loop Actions)**:
+  - Tell Corky *"Just finished that 2024 Saracosa, smooth with cherry notes, 4.4"* (or snap a photo of the empty bottle).
+  - Corky looks up the matching bottle via `search_user_cellar` and renders an in-chat confirmation card (`Confirm & Save` / `Cancel`) that executes `public.uncork_bottle` atomically—plus wishlist additions and quick stock adjustments via confirmation cards.
+- **Morning-After Check-In**:
+  - When Corky recommends a cellar bottle for dinner, remember the suggestion and surface a one-tap follow-up card next session (*"Did you uncork the 2024 Saracosa last night?"* -> `[🍾 Yep, score it!]` / `[Still on the rack]`).
+- **Clickable Bottle Cards in Chat**:
+  - Render interactive cellar bottle cards inline inside Corky replies that jump directly into `WineDetailModal`.
+
+---
+
+## 3. Wishlist & Wine Shop Mode
+- **Wishlist / "Want to Try" Status (`✅ Shipped`)**:
+  - Snap a bottle at a wine shop or restaurant without logging a tasting yet (`status: 'cellar' | 'tasted' | 'wishlist'`), alongside `In Cellar` / `Tasted` / `Wishlist` tabs, one-tap **Uncork** tasting sheet, and categorized flavor tag chips.
 - **Restaurant Wine Menu Scanner**:
   - Snap a photo of a printed restaurant wine list.
   - Corky reads all bottles + prices on the menu, compares them against your palate profile, and highlights the **Top 3 Best Value Matches** for your taste and meal.
 
 ---
 
-## 3. Cellar Analytics & Drinking Window Alerts
+## 4. Cellar Analytics & Drinking Window Alerts
 - **Peak Drinking Window Tracker**:
   - Highlight bottles in your cellar (`bottles_on_hand > 0`) that are entering their ideal `drinking_window` vs. bottles meant for long-term aging.
 - **Palate Dashboard**:
@@ -42,7 +53,7 @@ Turn Uncorked into a shared experience with friends while keeping personal cella
 
 ---
 
-## 4. Native Release & Polish
+## 5. Native Release & Polish
 - **Standalone Android `.apk` Build**:
   - Build via `eas build -p android --profile preview` (configured in `eas.json`) for standalone installation on Pixel.
 - **OTA Updates**:
