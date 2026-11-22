@@ -92,6 +92,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}   # from `claude setup-token`
           github_token: ${{ github.token }}
+          allowed_bots: atelier-ai-verre   # Verre's GitHub App starts this run; the action refuses other bots
           prompt: ${{ steps.prompt.outputs.text }}
           claude_args: >-
             --model ${{ inputs.model }}
