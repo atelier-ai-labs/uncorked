@@ -1,0 +1,200 @@
+# Verre's coding agent (HQ-005). Copy to .github/workflows/verre-agent.yml in a project repository.
+# Set-up and the reasons behind each choice: docs/mission-control/AGENTS.md in atelier-hq.
+#
+# Only Verre starts it (workflow_dispatch from its GitHub App), with one approved work order. Two jobs:
+#   agent:   the AI edits a checkout with a READ-ONLY token and no push credentials. Its only output is a patch.
+#   publish: no AI. It applies the patch, refuses workflow changes, pushes one branch (agent/...) and opens one
+#            pull request. It never merges and never deploys.
+# So the AI never holds a token that could push, merge or deploy, whatever the repository's settings are.
+name: Verre agent
+run-name: "Verre agent · ${{ inputs.ref }} · work order #${{ inputs.order_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      order_id: { description: "Work order id", required: true }
+      ref: { description: "Roadmap item, e.g. PP-004", required: true }
+      branch: { description: "Branch to create (agent/...)", required: true }
+      base: { description: "Branch the pull request goes into", required: true }
+      agent: { description: "claude or gemini", required: true }
+      model: { description: "Model for the agent", required: true }
+      brief: { description: "The work order (base64)", required: true }
+
+permissions: {}   # each job asks for only what it needs
+
+concurrency:
+  group: verre-agent-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read     # read the code; nothing in this job can write to the repository
+      id-token: write    # the Claude Code action's sign-in exchange
+    env:  # inputs reach the shell only as environment variables, never pasted into a script
+      ORDER_ID: ${{ inputs.order_id }}
+      ITEM: ${{ inputs.ref }}
+      BRANCH: ${{ inputs.branch }}
+      BASE: ${{ inputs.base }}
+      AGENT: ${{ inputs.agent }}
+      MODEL: ${{ inputs.model }}
+      BRIEF: ${{ inputs.brief }}
+    steps:
+      - name: Check the inputs
+        run: |
+          [[ "$ORDER_ID" =~ ^[0-9]+$ ]] || { echo "::error::bad order id"; exit 1; }
+          [[ "$ITEM" =~ ^[A-Z][A-Z0-9]{1,5}-[0-9]{3,}$ ]] || { echo "::error::bad item ref"; exit 1; }
+          [[ "$BRANCH" =~ ^agent/[a-z0-9._-]+$ ]] || { echo "::error::the branch must be agent/<ref>"; exit 1; }
+          [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ && "$BASE" != agent/* ]] || { echo "::error::bad base branch"; exit 1; }
+          [[ "$AGENT" == claude || "$AGENT" == gemini ]] || { echo "::error::unknown agent"; exit 1; }
+          [[ "$MODEL" =~ ^[a-z0-9.-]+$ ]] || { echo "::error::bad model name"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base }}
+          persist-credentials: false   # the agent's checkout can't push anywhere
+
+      - name: Write the work order and the prompt
+        id: prompt
+        run: |
+          mkdir -p "$RUNNER_TEMP/verre"
+          printf '%s' "$BRIEF" | base64 -d > "$RUNNER_TEMP/verre/work-order.md"
+          git switch -c "$BRANCH"
+          eof="VERRE_$(openssl rand -hex 12)"
+          {
+            echo "text<<$eof"
+            cat <<'INTRO'
+          You are a coding agent working on one work order from Verre, the studio's project manager. The full
+          order is below: do what it asks, within its permissions and limits.
+
+          How this run works:
+          - You're in a checkout of this repository on a new branch. Make the changes and run the project's tests
+            and linters to check them.
+          - Don't commit, push, open pull requests or call the GitHub API. When you finish, this workflow commits
+            your changes and opens the pull request itself.
+          - Don't edit anything under .github/workflows, and don't read, print or change secrets or .env files.
+          - Finally, write a short summary to the summary path given below: what you changed, how you checked each
+            "Done when" item, and anything you weren't sure about. If you can't do the work, change nothing and
+            write why there.
+
+          INTRO
+            echo "The summary path is: $RUNNER_TEMP/verre/summary.md"
+            echo
+            cat "$RUNNER_TEMP/verre/work-order.md"
+            echo "$eof"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Claude Code
+        if: env.AGENT == 'claude'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}   # from `claude setup-token`
+          github_token: ${{ github.token }}
+          prompt: ${{ steps.prompt.outputs.text }}
+          claude_args: >-
+            --model ${{ inputs.model }}
+            --max-turns 80
+            --disallowedTools "Bash(git push:*)" "Bash(git commit:*)" "Bash(gh:*)" "Bash(curl:*)" "Bash(wget:*)"
+
+      # Antigravity CLI on a free Gemini API key (a subscription sign-in can't run in CI). NOT VERIFIED YET: the
+      # install step and flags must be checked against https://antigravity.google/docs/cli/headless on first
+      # set-up (AGENTS.md). Until then a Gemini run stops here with a clear error instead of guessing.
+      - name: Antigravity CLI (Gemini)
+        if: env.AGENT == 'gemini'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PROMPT: ${{ steps.prompt.outputs.text }}
+        run: |
+          if ! command -v agy >/dev/null; then
+            echo "::error::The Antigravity CLI isn't installed in this workflow yet (see AGENTS.md, 'Gemini set-up')."
+            exit 1
+          fi
+          agy -p "$PROMPT" --model "$MODEL" --headless --approve all
+
+      - name: Package the agent's work as a patch
+        run: |
+          if git status --porcelain | grep -q '\.github/workflows/'; then
+            echo "::error::The agent changed workflow files, which isn't allowed. Nothing will be published."; exit 1
+          fi
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::The agent made no changes."; cat "$RUNNER_TEMP/verre/summary.md" 2>/dev/null; exit 1
+          fi
+          git diff --cached --binary > "$RUNNER_TEMP/verre/changes.patch"
+          [ -f "$RUNNER_TEMP/verre/summary.md" ] || echo "_The agent didn't write a summary._" > "$RUNNER_TEMP/verre/summary.md"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verre-work
+          path: |
+            ${{ runner.temp }}/verre/changes.patch
+            ${{ runner.temp }}/verre/summary.md
+            ${{ runner.temp }}/verre/work-order.md
+          retention-days: 7
+
+  publish:
+    needs: agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # push the agent's branch
+      pull-requests: write   # open its pull request
+    env:
+      ORDER_ID: ${{ inputs.order_id }}
+      ITEM: ${{ inputs.ref }}
+      BRANCH: ${{ inputs.branch }}
+      BASE: ${{ inputs.base }}
+      AGENT: ${{ inputs.agent }}
+      MODEL: ${{ inputs.model }}
+    steps:
+      # Pull requests opened with the built-in token don't trigger CI (GitHub's rule against loops). With the
+      # Verre Agent app set up (repo variable VERRE_AGENT_APP_ID + secret VERRE_AGENT_APP_KEY), the push and the
+      # pull request come from the app instead, so the project's tests run on the agent's work.
+      - name: Token for the push (Verre Agent app, when set up)
+        id: app
+        if: ${{ vars.VERRE_AGENT_APP_ID != '' }}
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.VERRE_AGENT_APP_ID }}
+          private-key: ${{ secrets.VERRE_AGENT_APP_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base }}
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: verre-work
+          path: ${{ runner.temp }}/verre
+
+      - name: Push the branch and open the pull request
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+        run: |
+          w="$RUNNER_TEMP/verre"
+          git switch -c "$BRANCH"
+          git apply --index "$w/changes.patch"
+          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
+            echo "::error::The patch changes workflow files, which isn't allowed. Nothing was pushed."; exit 1
+          fi
+          git config user.name "Verre agent"
+          git config user.email "verre-agent@users.noreply.github.com"
+          git commit -q -m "$ITEM: work order #$ORDER_ID ($AGENT, $MODEL)"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/$BRANCH"
+          title="$(head -n 1 "$w/work-order.md" | sed 's/^# Work order: //')"
+          {
+            echo "Work order #$ORDER_ID from Verre, done by **$AGENT** ($MODEL). Review it before merging: Verre and its agents never merge."
+            echo
+            echo "## The agent's summary"
+            cat "$w/summary.md"
+            echo
+            echo "<details><summary>The work order</summary>"
+            echo
+            cat "$w/work-order.md"
+            echo
+            echo "</details>"
+          } > "$w/pr.md"
+          gh pr create --base "$BASE" --head "$BRANCH" --title "$title" --body-file "$w/pr.md"
