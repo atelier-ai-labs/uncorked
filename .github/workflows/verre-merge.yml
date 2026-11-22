@@ -1,0 +1,80 @@
+# Verre's merge workflow. Copy to .github/workflows/verre-merge.yml in a project repository.
+# Set-up and reasons: docs/mission-control/AGENTS.md in atelier-hq ("Merging from Slack").
+#
+# Only Verre starts it (workflow_dispatch from its GitHub App), after the owner approved one merge in Slack.
+# There is no AI in this workflow. With the Verre Agent app's token it checks the pull request again and merges
+# exactly the commit the owner approved. It refuses if anything changed or looks wrong, and says why.
+name: Verre merge
+run-name: "Verre merge · PR #${{ inputs.pr }} · merge #${{ inputs.merge_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr: { description: "Pull request number", required: true }
+      head_sha: { description: "The commit the owner approved", required: true }
+      merge_id: { description: "Verre's merge id", required: true }
+
+permissions: {}   # the merge uses the Verre Agent app's token, not the built-in one
+
+concurrency:
+  group: verre-merge-${{ inputs.pr }}
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR: ${{ inputs.pr }}
+      HEAD_SHA: ${{ inputs.head_sha }}
+      MERGE_ID: ${{ inputs.merge_id }}
+    steps:
+      - name: Check the inputs
+        run: |
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "::error::bad PR number"; exit 1; }
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::bad commit"; exit 1; }
+          [[ "$MERGE_ID" =~ ^[0-9]+$ ]] || { echo "::error::bad merge id"; exit 1; }
+
+      - name: Token (Verre Agent app)
+        id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.VERRE_AGENT_APP_ID }}
+          private-key: ${{ secrets.VERRE_AGENT_APP_KEY }}
+
+      - name: Check the pull request and merge it
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          stop() { echo "::error::$1"; echo "**Not merged:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+
+          # GitHub works out "mergeable" in the background, so ask a few times.
+          for i in 1 2 3 4 5 6; do
+            pr="$(gh pr view "$PR" --json state,isDraft,headRefOid,mergeable,baseRefName,headRefName,files,statusCheckRollup)"
+            [ "$(jq -r .mergeable <<<"$pr")" != UNKNOWN ] && break
+            sleep 5
+          done
+
+          [ "$(jq -r .state <<<"$pr")" = OPEN ] || stop "PR #$PR isn't open."
+          [ "$(jq -r .isDraft <<<"$pr")" = false ] || stop "PR #$PR is a draft."
+          [ "$(jq -r .headRefOid <<<"$pr")" = "$HEAD_SHA" ] || stop "PR #$PR has new commits since it was approved."
+          [ "$(jq -r .mergeable <<<"$pr")" = MERGEABLE ] || stop "PR #$PR has merge conflicts (or GitHub can't tell yet)."
+          if jq -r '.files[].path' <<<"$pr" | grep -q '^\.github/workflows/'; then
+            stop "PR #$PR changes workflow files; merge that one yourself on GitHub."
+          fi
+          # Checks: nothing failing, nothing still running. A repo with no checks has nothing to wait for.
+          bad="$(jq -r '[.statusCheckRollup[]? | select((.conclusion // .state // "") as $c |
+                  ($c | test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE")) or
+                  ((.status // "COMPLETED") != "COMPLETED") or ($c == "PENDING"))] | length' <<<"$pr")"
+          [ "$bad" = 0 ] || stop "PR #$PR has $bad check(s) failing or still running."
+
+          head="$(jq -r .headRefName <<<"$pr")"
+          del=""; [[ "$head" == agent/* ]] && del="--delete-branch"   # tidy up agents' branches only
+          for how in --squash --merge --rebase; do        # whichever this repository allows
+            if gh pr merge "$PR" $how --match-head-commit "$HEAD_SHA" $del; then
+              echo "Merged PR #$PR into $(jq -r .baseRefName <<<"$pr") ($how) for Verre merge #$MERGE_ID." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          stop "GitHub refused the merge (see the log above)."
