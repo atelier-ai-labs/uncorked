@@ -16,12 +16,15 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
 import { compressBottlePhoto, CompressedPhoto } from '../lib/wineVision';
-import { CorkyMessage } from '../types/database';
+import { findMentionedLogs } from '../lib/corkyBottleMatch';
+import { CorkyMessage, WineLog } from '../types/database';
 
 interface CorkyChatDrawerProps {
   visible: boolean;
   userId: string;
+  logs: WineLog[];
   onClose: () => void;
+  onOpenBottle: (log: WineLog) => void;
 }
 
 const QUICK_PROMPTS = [
@@ -50,7 +53,9 @@ const QUICK_PROMPTS = [
 export function CorkyChatDrawer({
   visible,
   userId,
+  logs,
   onClose,
+  onOpenBottle,
 }: CorkyChatDrawerProps) {
   const [messages, setMessages] = useState<CorkyMessage[]>([]);
   const [input, setInput] = useState('');
@@ -278,6 +283,9 @@ export function CorkyChatDrawer({
               }
               renderItem={({ item }) => {
                 const isUser = item.role === 'user';
+                const mentioned = isUser
+                  ? []
+                  : findMentionedLogs(item.content, logs);
                 return (
                   <View
                     style={[
@@ -310,6 +318,36 @@ export function CorkyChatDrawer({
                         {item.content}
                       </Text>
                     </View>
+
+                    {mentioned.map((log) => (
+                      <Pressable
+                        key={log.id}
+                        style={styles.bottleCard}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Open ${log.wines.producer} ${log.wines.name}`}
+                        onPress={() => onOpenBottle(log)}
+                      >
+                        <Text style={styles.bottleCardEmoji}>🍾</Text>
+                        <View style={styles.bottleCardBody}>
+                          <Text style={styles.bottleCardTitle} numberOfLines={1}>
+                            {log.wines.producer} {log.wines.name}
+                            {log.wines.vintage ? ` ${log.wines.vintage}` : ''}
+                          </Text>
+                          <Text style={styles.bottleCardMeta} numberOfLines={1}>
+                            {[
+                              log.wines.wine_type,
+                              log.wines.region,
+                              (log.bottles_on_hand ?? 0) > 0
+                                ? `${log.bottles_on_hand} on hand`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' • ')}
+                          </Text>
+                        </View>
+                        <Text style={styles.bottleCardChevron}>›</Text>
+                      </Pressable>
+                    ))}
                   </View>
                 );
               }}
@@ -561,6 +599,38 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
     borderWidth: 1,
     borderColor: '#382028',
+  },
+  bottleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 8,
+    padding: 10,
+    borderRadius: 14,
+    backgroundColor: '#2A1620',
+    borderWidth: 1,
+    borderColor: '#573F28',
+  },
+  bottleCardEmoji: {
+    fontSize: 22,
+  },
+  bottleCardBody: {
+    flex: 1,
+  },
+  bottleCardTitle: {
+    color: '#FAF3F0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  bottleCardMeta: {
+    color: '#D49B6A',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  bottleCardChevron: {
+    color: '#E5A93C',
+    fontSize: 22,
+    fontWeight: '700',
   },
   messageText: {
     fontSize: 14,

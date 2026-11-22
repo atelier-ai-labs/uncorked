@@ -578,7 +578,13 @@ export default function App() {
       <CorkyChatDrawer
         visible={corkyDrawerOpen}
         userId={session.user.id}
+        logs={logs}
         onClose={() => setCorkyDrawerOpen(false)}
+        onOpenBottle={(log) => {
+          // Close the drawer first so the two native modals don't overlap.
+          setCorkyDrawerOpen(false);
+          setSelectedLog(log);
+        }}
       />
 
       <WineDetailModal
