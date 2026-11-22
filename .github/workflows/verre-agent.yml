@@ -94,9 +94,14 @@ jobs:
           github_token: ${{ github.token }}
           allowed_bots: atelier-ai-verre   # Verre's GitHub App starts this run; the action refuses other bots
           prompt: ${{ steps.prompt.outputs.text }}
+          # Unattended, Claude Code only gets read-only tools unless they're listed. Allow exactly what the job
+          # needs: edit files in the checkout, write the summary, run the project's own install/test/lint
+          # commands and look at its own diff. Pushing, committing, gh and network tools stay blocked.
           claude_args: >-
             --model ${{ inputs.model }}
             --max-turns 80
+            --add-dir ${{ runner.temp }}/verre
+            --allowedTools "Edit" "MultiEdit" "Write" "Bash(npm ci)" "Bash(npm install:*)" "Bash(npm run:*)" "Bash(npm test:*)" "Bash(npx tsc:*)" "Bash(npx expo lint:*)" "Bash(pip install:*)" "Bash(python -m pytest:*)" "Bash(pytest:*)" "Bash(ruff:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(ls:*)"
             --disallowedTools "Bash(git push:*)" "Bash(git commit:*)" "Bash(gh:*)" "Bash(curl:*)" "Bash(wget:*)"
 
       # Antigravity CLI on a free Gemini API key (a subscription sign-in can't run in CI). NOT VERIFIED YET: the
