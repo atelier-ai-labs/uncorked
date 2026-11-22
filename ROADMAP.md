@@ -111,9 +111,15 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 #### UNC-008 — Clickable bottle cards in chat
 
-- **Status:** idea
+- **Status:** done
 - **Priority:** P3
 - **Goal:** Corky's replies show interactive cellar bottle cards that open `WineDetailModal`.
+
+**Done when:**
+- Corky's replies mention a cellar bottle showing a tappable card (modal).
+- All tests pass.
+
+**References:** #6 (built by Verre's coding agent, work order #1, 2026-11-22)
 
 ### Wishlist and wine shop mode
 
