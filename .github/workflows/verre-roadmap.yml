@@ -1,0 +1,107 @@
+# Verre's roadmap workflow (HQ-012). Copy to .github/workflows/verre-roadmap.yml in a project repository.
+# Set-up and reasons: docs/mission-control/AGENTS.md in atelier-hq ("Roadmap changes reach ROADMAP.md").
+#
+# Only Verre starts it (workflow_dispatch from its GitHub App), after the owner approved a roadmap change in Slack.
+# There is no AI in this workflow. Verre sends the whole new ROADMAP.md (gzip + base64) and the blob of the file
+# she read. With the Verre Agent app's token this checks the file is still that blob, writes it, refuses if
+# anything other than that one ROADMAP.md changed, and opens (or adds to) the "Roadmap updates" pull request,
+# or commits straight to the branch when the owner chose that ("commit" mode).
+name: Verre roadmap
+run-name: "Verre roadmap · ${{ inputs.title }} · write #${{ inputs.write_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      path: { description: "The ROADMAP.md to write", required: true }
+      blob_sha: { description: "The file Verre read (git blob SHA)", required: true }
+      content: { description: "The new file, gzip + base64", required: true }
+      write_id: { description: "Verre's roadmap write id", required: true }
+      mode: { description: "pr or commit", required: true, default: pr }
+      title: { description: "What changed, for the commit message", required: false, default: "roadmap update" }
+
+permissions: {}   # writes use the Verre Agent app's token, not the built-in one
+
+concurrency:
+  group: verre-roadmap
+  cancel-in-progress: false
+
+jobs:
+  write:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FILE: ${{ inputs.path }}
+      BLOB: ${{ inputs.blob_sha }}
+      CONTENT: ${{ inputs.content }}
+      WRITE_ID: ${{ inputs.write_id }}
+      MODE: ${{ inputs.mode }}
+      TITLE: ${{ inputs.title }}
+      BASE: ${{ github.ref_name }}
+      BRANCH: verre/roadmap
+    steps:
+      - name: Check the inputs
+        run: |
+          stop() { echo "::error::$1"; echo "**Not written:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          [[ "$FILE" =~ ^([A-Za-z0-9_.-]+/)*ROADMAP\.md$ ]] || stop "Only a file named ROADMAP.md can be written."
+          [[ "/$FILE/" != *"/../"* && "/$FILE/" != *"/./"* ]] || stop "Bad path."
+          [[ "$BLOB" =~ ^[0-9a-f]{40}$ ]] || stop "Bad blob SHA."
+          [[ "$WRITE_ID" =~ ^[0-9]+$ ]] || stop "Bad write id."
+          [[ "$MODE" == pr || "$MODE" == commit ]] || stop "Mode must be pr or commit."
+
+      - name: Token (Verre Agent app)
+        id: app
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.VERRE_AGENT_APP_ID }}
+          private-key: ${{ secrets.VERRE_AGENT_APP_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Write ROADMAP.md
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          stop() { echo "::error::$1"; echo "**Not written:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          open=""
+          if [ "$MODE" = pr ]; then
+            open="$(gh pr list --head "$BRANCH" --base "$BASE" --state open --json number -q '.[0].number')"
+            if [ -n "$open" ]; then
+              git fetch -q "$remote" "$BRANCH" && git checkout -q -B "$BRANCH" FETCH_HEAD   # add to the open PR
+            else
+              git checkout -q -B "$BRANCH"                                                 # a fresh PR from base
+            fi
+          fi
+
+          [ -f "$FILE" ] && [ ! -L "$FILE" ] || stop "$FILE isn't a regular file on this branch."
+          [ "$(git rev-parse "HEAD:$FILE")" = "$BLOB" ] || stop "$FILE changed since Verre read it, so nothing was written."
+          printf '%s' "$CONTENT" | base64 -d | gunzip > "$FILE" || stop "Couldn't decode the new file."
+
+          changed="$(git status --porcelain)"
+          [ -n "$changed" ] || { echo "Nothing to change." >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          [ "$changed" = " M $FILE" ] || stop "Refusing: something other than $FILE changed."
+
+          git config user.name "Verre"
+          git config user.email "verre-agent@users.noreply.github.com"
+          git commit -q -am "Roadmap: ${TITLE}" -m "Approved in Slack; Verre roadmap write #${WRITE_ID}."
+
+          if [ "$MODE" = commit ]; then
+            git push -q "$remote" "HEAD:refs/heads/$BASE" || stop "GitHub refused the push to $BASE (is it protected?)."
+            echo "Committed $FILE to $BASE for Verre roadmap write #$WRITE_ID." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -n "$open" ]; then
+            git push -q "$remote" "HEAD:refs/heads/$BRANCH" || stop "Couldn't push to $BRANCH."
+          else
+            git push -q --force "$remote" "HEAD:refs/heads/$BRANCH" || stop "Couldn't push to $BRANCH."   # an old, finished branch is replaced
+            gh pr create --base "$BASE" --head "$BRANCH" --title "Roadmap updates from Verre" --body "$(printf '%s\n\n%s' \
+              "Roadmap changes approved in Slack, written into \`$FILE\` in the roadmap standard's format. Later approvals add to this PR until it merges." \
+              "Only \`$FILE\` changes here. Merge it yourself or tell Verre to.")"
+          fi
+          echo "Wrote $FILE on $BRANCH for Verre roadmap write #$WRITE_ID." >> "$GITHUB_STEP_SUMMARY"
