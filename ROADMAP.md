@@ -33,50 +33,9 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 ### Social & friends ("Tasting Circle")
 
-#### UNC-001 — Profiles and friendships
-
-- **Status:** idea
-- **Priority:** P3
-- **Goal:** People can have a profile and add friends, while personal cellars stay private by default.
-
-**Requirements:**
-- `public.profiles` (`id`, `username`, `display_name`, `avatar_url`, `favorite_styles`).
-- `public.friendships` (`requester_id`, `addressee_id`, `status: 'pending' | 'accepted'`).
-
-#### UNC-002 — Tasting feed
-
-- **Status:** idea
-- **Priority:** P3
-- **Goal:** A chronological feed of the bottles your friends have uncorked, with their 0.0–5.0 ratings and
-  tasting notes.
-
-**Depends on:** UNC-001
-
-#### UNC-003 — "Drank together" tagging
-
-- **Status:** idea
-- **Priority:** P3
-- **Goal:** Tag friends when logging a bottle, and prompt them to add their own rating and notes to the same
-  wine so scores can be compared side by side.
-
-**Requirements:**
-- `shared_with uuid[]` or a `public.shared_tastings` table.
-- Tagged friends rate the exact same `wine_id`.
-
-**Depends on:** UNC-001
-
-#### UNC-004 — Send bottle recommendations
-
-- **Status:** idea
-- **Priority:** P3
-- **Goal:** One-tap "Recommend to a Friend" on any bottle sends the wine and a personal note to the friend's
-  "Recommended by Friends / Wishlist" tab.
-
-**Depends on:** UNC-001
-
 #### UNC-005 — Corky multi-palate pairing
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** Ask Corky "Jake and Sarah are coming over for pasta night—which bottle on my rack matches
   everyone's palate?" and get an answer from your bottles on hand and your friends' ratings.
@@ -86,11 +45,18 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 **Depends on:** UNC-001
 
+**Done when:**
+- Asking Corky for a bottle for named friends answers from bottles on hand that suit everyone's ratings.
+- If a friend has no ratings yet, Corky says so instead of guessing.
+- typecheck passes.
+
+**Depends on:** profiles and friendships (parked in Future ideas)
+
 ### Corky actions and effortless bottle tracking
 
 #### UNC-006 — Conversational bottle uncorking
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** Tell Corky "Just finished that 2024 Saracosa, smooth with cherry notes, 4.4" (or send a photo of the
   empty bottle), and confirm a card that logs it.
@@ -102,12 +68,22 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 **Out of scope:** Corky changing anything without a confirmation tap.
 
+**Done when:**
+- Telling Corky about a finished bottle (or sending a photo of it) shows a confirmation card for the right cellar bottle.
+- Confirm & Save logs the tasting and lowers bottles on hand by one; Cancel changes nothing.
+- typecheck passes.
+
 #### UNC-007 — Morning-after check-in
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** When Corky recommends a cellar bottle for dinner, it asks next session whether you opened it, with
   one-tap answers (🍾 Yep, score it! / Still on the rack).
+
+**Done when:**
+- After Corky recommends a cellar bottle, the next session asks whether it was opened.
+- 'Yep, score it!' opens the tasting sheet; 'Still on the rack' changes nothing.
+- typecheck passes.
 
 #### UNC-008 — Clickable bottle cards in chat
 
@@ -137,7 +113,7 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 #### UNC-010 — Restaurant wine menu scanner
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** Photograph a restaurant wine list, and Corky highlights the top 3 best-value matches for your taste
   and meal.
@@ -145,36 +121,55 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 **Requirements:**
 - Reads every bottle and price on the menu and compares them with your palate profile.
 
+**Done when:**
+- A photo of a wine list returns up to 3 picks, each with its name, price and why it fits my palate and meal.
+- A blurry or unreadable photo gets a clear 'couldn't read it' message.
+- typecheck passes.
+
 ### Cellar analytics and drinking-window alerts
 
 #### UNC-011 — Peak drinking window tracker
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** Highlight cellar bottles (`bottles_on_hand > 0`) entering their `drinking_window`, separately from
   bottles meant for long aging.
 
+**Done when:**
+- The cellar shows which bottles on hand are in, or entering, their drinking window.
+- Bottles meant for long aging are listed separately.
+- typecheck passes.
+
 #### UNC-012 — Palate dashboard
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** A visual breakdown of your most-logged regions, a varietal radar chart, and best value-for-money
   bottles (`rating` vs. `price_paid`).
+
+**Done when:**
+- A palate screen shows my top regions, a varietal radar chart and my best value-for-money bottles.
+- With only a few logged bottles it shows a friendly empty state, not an error.
+- typecheck passes.
 
 ### Native release and polish
 
 #### UNC-013 — Standalone Android `.apk`
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P3
 - **Goal:** Install Uncorked on the Pixel as a standalone app instead of through Expo Go.
 
 **Requirements:**
 - Built with `eas build -p android --profile preview` (configured in `eas.json`).
 
+**Done when:**
+- `eas build -p android --profile preview` produces an installable .apk.
+- It installs and signs in on the Pixel without Expo Go.
+
 #### UNC-014 — Over-the-air updates
 
-- **Status:** idea
+- **Status:** planned
 - **Priority:** P4
 - **Goal:** JavaScript and UI updates reach the installed app without a rebuild.
 
@@ -183,15 +178,13 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 **Depends on:** UNC-013
 
-#### UNC-015 — Hardware-backed token storage
-
-- **Status:** idea
-- **Priority:** P4
-- **Goal:** Store the sign-in token with hardware encryption on the device.
-
-**Requirements:**
-- Optional move from `AsyncStorage` to `expo-secure-store`.
+**Done when:**
+- A JavaScript-only change, published as an update, reaches the installed app on its next launch without a rebuild.
 
 ## Future ideas
 
-None beyond the items above yet.
+- **Profiles and friendships:** People can have a profile and add friends, while personal cellars stay private by default.
+- **Tasting feed:** A chronological feed of the bottles your friends have uncorked, with their 0.0–5.0 ratings and tasting notes.
+- **"Drank together" tagging:** Tag friends when logging a bottle, and prompt them to add their own rating and notes to the same wine so scores can be compared side by side.
+- **Send bottle recommendations:** One-tap "Recommend to a Friend" on any bottle sends the wine and a personal note to the friend's "Recommended by Friends / Wishlist" tab.
+- **Hardware-backed token storage:** Store the sign-in token with hardware encryption on the device.
