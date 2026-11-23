@@ -181,6 +181,15 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 **Done when:**
 - A JavaScript-only change, published as an update, reaches the installed app on its next launch without a rebuild.
 
+#### UNC-016 — Wishlist for bottles I want to try
+
+- **Status:** planned
+- **Priority:** P2
+- **Goal:** A wishlist for bottles I want to try
+
+**Done when:**
+- I can add a bottle to it and see the list
+
 ## Future ideas
 
 - **Profiles and friendships:** People can have a profile and add friends, while personal cellars stay private by default.
