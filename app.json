@@ -19,10 +19,10 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES"
-      ],
-      "runtimeVersion": {
-        "policy": "appVersion"
-      }
+      ]
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
     },
     "plugins": [
       [
