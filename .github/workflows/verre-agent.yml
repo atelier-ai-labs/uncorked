@@ -56,6 +56,22 @@ jobs:
           ref: ${{ inputs.base }}
           persist-credentials: false   # the agent's checkout can't push anywhere
 
+      # The project's own set-up and checks live in the repository: .verre/setup.sh installs its dependencies
+      # and .verre/checks.sh runs the same tests and linters as its CI (see AGENTS.md, "Project checks").
+      # Installing here, before the AI starts and with no AI involved, means the agent never needs a package
+      # manager or the network to test its work. PP-011's agent couldn't install anything and worked blind.
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Install the project's dependencies (no AI)
+        run: |
+          if git cat-file -e HEAD:.verre/setup.sh 2>/dev/null; then
+            bash .verre/setup.sh
+          else
+            echo "No .verre/setup.sh in this repository: the agent installs what it needs itself."
+          fi
+
       - name: Write the work order and the prompt
         id: prompt
         run: |
@@ -74,7 +90,11 @@ jobs:
             and linters to check them.
           - Don't commit, push, open pull requests or call the GitHub API. When you finish, this workflow commits
             your changes and opens the pull request itself.
-          - Don't edit anything under .github/workflows, and don't read, print or change secrets or .env files.
+          - If the repository has .verre/checks.sh, run `bash .verre/checks.sh` to check your work: it runs the
+            same tests and linters as CI, and the dependencies are already installed. After you finish, this
+            workflow runs it again itself and puts the result in the pull request.
+          - Don't edit anything under .github/workflows or .verre, and don't read, print or change secrets or
+            .env files.
           - Finally, write a short summary to the summary path given below: what you changed, how you checked each
             "Done when" item, and anything you weren't sure about. If you can't do the work, change nothing and
             write why there.
@@ -87,6 +107,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Claude Code
+        id: claude
         if: env.AGENT == 'claude'
         uses: anthropics/claude-code-action@v1
         with:
@@ -103,12 +124,12 @@ jobs:
             --model ${{ inputs.model }}
             --max-turns 80
             --add-dir ${{ runner.temp }}/verre
-            --allowedTools "Edit" "MultiEdit" "Write" "Bash(cd:*)" "Bash(npm ci)" "Bash(npm install:*)" "Bash(npm run:*)" "Bash(npm --prefix:*)" "Bash(npx vitest:*)" "Bash(npx eslint:*)" "Bash(npm test:*)" "Bash(npx tsc:*)" "Bash(npx expo lint:*)" "Bash(pip install:*)" "Bash(python -m pytest:*)" "Bash(pytest:*)" "Bash(ruff:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(ls:*)"
+            --allowedTools "Edit" "MultiEdit" "Write" "Bash(cd:*)" "Bash(npm ci)" "Bash(npm install:*)" "Bash(npm run:*)" "Bash(npm --prefix:*)" "Bash(npx vitest:*)" "Bash(npx eslint:*)" "Bash(npm test:*)" "Bash(npx tsc:*)" "Bash(npx expo lint:*)" "Bash(pip install:*)" "Bash(python -m pytest:*)" "Bash(pytest:*)" "Bash(ruff:*)" "Bash(bash .verre/checks.sh)" "Bash(python -m pip install:*)" "Bash(python3 -m pytest:*)" "Bash(git status:*)" "Bash(git diff:*)" "Bash(ls:*)"
             --disallowedTools "Bash(git push:*)" "Bash(git commit:*)" "Bash(gh:*)" "Bash(curl:*)" "Bash(wget:*)"
 
-      # Antigravity CLI on a free Gemini API key (a subscription sign-in can't run in CI). NOT VERIFIED YET: the
-      # install step and flags must be checked against https://antigravity.google/docs/cli/headless on first
-      # set-up (AGENTS.md). Until then a Gemini run stops here with a clear error instead of guessing.
+      # Gemini work orders are dispatched by Verre to private atelier-hq's verre-agent-local.yml (using the
+      # local Antigravity runner so public repos never host self-hosted runners). This fallback handles direct
+      # runs if agy is preinstalled in a repo's runner.
       - name: Antigravity CLI (Gemini)
         if: env.AGENT == 'gemini'
         env:
@@ -116,15 +137,15 @@ jobs:
           PROMPT: ${{ steps.prompt.outputs.text }}
         run: |
           if ! command -v agy >/dev/null; then
-            echo "::error::The Antigravity CLI isn't installed in this workflow yet (see AGENTS.md, 'Gemini set-up')."
+            echo "::error::Gemini work orders normally run via atelier-hq's private verre-agent-local.yml, and agy isn't installed in this runner."
             exit 1
           fi
-          agy -p "$PROMPT" --model "$MODEL" --headless --approve all
+          agy -p "$PROMPT" --add-dir "$RUNNER_TEMP/verre" --sandbox --dangerously-skip-permissions --disable-slash-commands
 
       - name: Package the agent's work as a patch
         run: |
-          if git status --porcelain | grep -q '\.github/workflows/'; then
-            echo "::error::The agent changed workflow files, which isn't allowed. Nothing will be published."; exit 1
+          if git status --porcelain | grep -qE '\.github/workflows/|\.verre/'; then
+            echo "::error::The agent changed workflow or .verre files, which isn't allowed. Nothing will be published."; exit 1
           fi
           git add -A
           if git diff --cached --quiet; then
@@ -133,6 +154,19 @@ jobs:
           git diff --cached --binary > "$RUNNER_TEMP/verre/changes.patch"
           [ -f "$RUNNER_TEMP/verre/summary.md" ] || echo "_The agent didn't write a summary._" > "$RUNNER_TEMP/verre/summary.md"
 
+      # After the patch is taken, so nothing the checks write ends up in it. The script comes from the base
+      # branch (HEAD: the agent can't commit), so an agent that edited .verre/checks.sh can't mark its own work.
+      - name: Run the project's checks on the agent's work (no AI)
+        run: |
+          w="$RUNNER_TEMP/verre"
+          if git cat-file -e HEAD:.verre/checks.sh 2>/dev/null; then
+            git show HEAD:.verre/checks.sh > "$w/checks.sh"
+            set +e; bash "$w/checks.sh" > "$w/checks.log" 2>&1; echo $? > "$w/checks.status"; set -e
+            tail -n 60 "$w/checks.log"
+          else
+            echo "none" > "$w/checks.status"; : > "$w/checks.log"
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: verre-work
@@ -140,6 +174,17 @@ jobs:
             ${{ runner.temp }}/verre/changes.patch
             ${{ runner.temp }}/verre/summary.md
             ${{ runner.temp }}/verre/work-order.md
+            ${{ runner.temp }}/verre/checks.status
+            ${{ runner.temp }}/verre/checks.log
+          retention-days: 7
+
+      # Claude Code's own record of the run: every tool it tried and whether it was allowed. The step's log
+      # hides it, so without this a "my commands were blocked" summary can't be checked (PP-011).
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.claude.outputs.execution_file != ''
+        with:
+          name: verre-agent-transcript
+          path: ${{ steps.claude.outputs.execution_file }}
           retention-days: 7
 
   publish:
@@ -185,8 +230,8 @@ jobs:
           w="$RUNNER_TEMP/verre"
           git switch -c "$BRANCH"
           git apply --index "$w/changes.patch"
-          if git diff --cached --name-only | grep -q '^\.github/workflows/'; then
-            echo "::error::The patch changes workflow files, which isn't allowed. Nothing was pushed."; exit 1
+          if git diff --cached --name-only | grep -qE '^(\.github/workflows|\.verre)/'; then
+            echo "::error::The patch changes workflow or .verre files, which isn't allowed. Nothing was pushed."; exit 1
           fi
           git config user.name "Verre agent"
           git config user.email "verre-agent@users.noreply.github.com"
@@ -198,6 +243,14 @@ jobs:
             echo
             echo "## The agent's summary"
             cat "$w/summary.md"
+            echo
+            echo "## The project's checks, run by the workflow (no AI)"
+            case "$(cat "$w/checks.status" 2>/dev/null || echo none)" in
+              0) echo "✅ \`.verre/checks.sh\` passed on the agent's work." ;;
+              none) echo "This repository has no \`.verre/checks.sh\`, so only its CI checks this pull request." ;;
+              *) echo "❌ \`.verre/checks.sh\` failed on the agent's work. The end of its output:"
+                 echo; echo '```'; tail -n 40 "$w/checks.log"; echo '```' ;;
+            esac
             echo
             echo "<details><summary>The work order</summary>"
             echo
