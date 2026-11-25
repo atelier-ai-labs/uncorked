@@ -585,6 +585,7 @@ export default function App() {
           setCorkyDrawerOpen(false);
           setSelectedLog(log);
         }}
+        onCellarChanged={fetchCellarLogs}
       />
 
       <WineDetailModal
