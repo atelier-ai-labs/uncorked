@@ -56,7 +56,7 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 #### UNC-006 — Conversational bottle uncorking
 
-- **Status:** planned
+- **Status:** done
 - **Priority:** P3
 - **Goal:** Tell Corky "Just finished that 2024 Saracosa, smooth with cherry notes, 4.4" (or send a photo of the
   empty bottle), and confirm a card that logs it.

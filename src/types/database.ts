@@ -79,6 +79,65 @@ export interface ExtractedWineProfile {
   drinking_window: string | null;
 }
 
+export type CorkyActionStatus = 'pending' | 'confirmed' | 'cancelled';
+
+export interface ProposedUncorkAction {
+  id: string;
+  type: 'uncork_bottle';
+  logId: number;
+  wineId: number;
+  producer: string;
+  name: string;
+  vintage: number | null;
+  wineType: WineType;
+  region: string | null;
+  currentBottlesOnHand: number;
+  nextBottlesOnHand: number;
+  nextStatus: WineLogStatus;
+  rating: number | null;
+  flavorTags: string[];
+  tastingNotes: string | null;
+}
+
+export interface ProposedWishlistAction {
+  id: string;
+  type: 'add_to_wishlist';
+  wineId: number | null;
+  producer: string;
+  name: string;
+  vintage: number | null;
+  wineType: WineType;
+  region: string | null;
+  country: string | null;
+  varietals: string[];
+  pricePaid: number | null;
+  purchaseLocation: string | null;
+  notes: string | null;
+}
+
+export interface ProposedStockChangeAction {
+  id: string;
+  type: 'update_stock';
+  logId: number;
+  wineId: number;
+  producer: string;
+  name: string;
+  vintage: number | null;
+  wineType: WineType;
+  region: string | null;
+  currentBottlesOnHand: number;
+  nextBottlesOnHand: number;
+  currentStatus: WineLogStatus;
+  nextStatus: WineLogStatus;
+  delta: number;
+  reason: string | null;
+}
+
+export type CorkyProposedAction =
+  | ProposedUncorkAction
+  | ProposedWishlistAction
+  | ProposedStockChangeAction;
+
 export interface CorkyMessage {
   id: number | string;
   user_id?: string;
@@ -86,4 +145,5 @@ export interface CorkyMessage {
   content: string;
   tools_used: string[];
   created_at: string;
+  proposed_actions?: CorkyProposedAction[];
 }
