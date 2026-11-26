@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { getBottomInset, getTopInset } from '../lib/safeArea';
 import { WineLog } from '../types/database';
 import { FlavorTagPicker } from './FlavorTagPicker';
 import { StarRatingInput } from './StarRatingInput';
@@ -79,21 +83,41 @@ export function UncorkTastingModal({
       visible={Boolean(log)}
       animationType="slide"
       presentationStyle="pageSheet"
+      onRequestClose={() => {
+        if (!saving) {
+          onClose();
+        }
+      }}
     >
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable onPress={onClose} disabled={saving}>
-            <Text style={styles.cancelText}>Cancel</Text>
-          </Pressable>
-          <Text style={styles.headerTitle}>Uncork Bottle</Text>
-          <Pressable onPress={handleConfirm} disabled={saving}>
-            <Text style={[styles.confirmText, saving && { opacity: 0.4 }]}>
-              {saving ? 'Saving...' : 'Confirm'}
-            </Text>
-          </Pressable>
-        </View>
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView style={styles.container} behavior="padding">
+          <View
+            style={[
+              styles.header,
+              {
+                paddingTop:
+                  Platform.OS === 'android' ? getTopInset() + 12 : 18,
+              },
+            ]}
+          >
+            <Pressable onPress={onClose} disabled={saving}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+            <Text style={styles.headerTitle}>Uncork Bottle</Text>
+            <Pressable onPress={handleConfirm} disabled={saving}>
+              <Text style={[styles.confirmText, saving && { opacity: 0.4 }]}>
+                {saving ? 'Saving...' : 'Confirm'}
+              </Text>
+            </Pressable>
+          </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: getBottomInset() + 36 },
+            ]}
+          >
           <View style={styles.contextBanner}>
             <Text style={styles.bannerTitle}>
               {wine.vintage ? `${wine.vintage} ` : ''}
@@ -143,13 +167,18 @@ export function UncorkTastingModal({
               <Text style={styles.ctaButtonText}>🍾 Uncork & Save Tasting</Text>
             )}
           </Pressable>
-        </ScrollView>
-      </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#12090C',
+  },
   container: {
     flex: 1,
     backgroundColor: '#12090C',

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,6 +16,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
+import { getBottomInset } from '../lib/safeArea';
 import { compressBottlePhoto, CompressedPhoto } from '../lib/wineVision';
 import { findMentionedLogs } from '../lib/corkyBottleMatch';
 import {
@@ -79,7 +81,25 @@ export function CorkyChatDrawer({
   );
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const listRef = useRef<FlatList<CorkyMessage>>(null);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () =>
+      setKeyboardVisible(true)
+    );
+    const hideSub = Keyboard.addListener(hideEvent, () =>
+      setKeyboardVisible(false)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (visible && userId) {
@@ -236,12 +256,14 @@ export function CorkyChatDrawer({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
       <View style={styles.backdrop}>
-        <KeyboardAvoidingView
-          style={styles.drawer}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <KeyboardAvoidingView style={styles.drawer} behavior="padding">
           {/* Drawer Handle & Header */}
           <View style={styles.drawerHeader}>
             <View style={styles.titleRow}>
@@ -443,7 +465,16 @@ export function CorkyChatDrawer({
           )}
 
           {/* Input Bar */}
-          <View style={styles.inputBar}>
+          <View
+            style={[
+              styles.inputBar,
+              {
+                paddingBottom: keyboardVisible
+                  ? 10
+                  : Math.max(getBottomInset(), 14),
+              },
+            ]}
+          >
             <Pressable
               style={styles.iconButton}
               onPress={() => handleAttachPhoto(true)}
