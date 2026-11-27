@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -10,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { getBottomInset, getTopInset } from '../lib/safeArea';
 
 export function AuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -79,8 +79,14 @@ export function AuthScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[
+        styles.container,
+        {
+          paddingTop: getTopInset() + 24,
+          paddingBottom: getBottomInset() + 24,
+        },
+      ]}
+      behavior="padding"
     >
       <View style={styles.card}>
         <Text style={styles.badge}>POCKET SOMMELIER & CELLAR</Text>

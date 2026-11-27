@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
-  Platform,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -16,6 +15,7 @@ import {
 } from 'react-native';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './src/lib/supabase';
+import { getBottomInset, getTopInset } from './src/lib/safeArea';
 import { resolveSignedBottlePhotoUrls } from './src/lib/wineVision';
 import { WineLog, WineLogStatus, WineType } from './src/types/database';
 import { AuthScreen } from './src/components/AuthScreen';
@@ -252,7 +252,7 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingTop: getTopInset() }]}>
       <StatusBar barStyle="light-content" />
 
       {/* Top Header */}
@@ -396,7 +396,10 @@ export default function App() {
       <FlatList
         data={filteredLogs}
         keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: getBottomInset() + 100 },
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={loadingLogs}
@@ -543,7 +546,7 @@ export default function App() {
       />
 
       {/* Floating Action Bar: Scan Bottle + Ask Corky */}
-      <View style={styles.fabRow}>
+      <View style={[styles.fabRow, { bottom: getBottomInset() + 10 }]}>
         <Pressable
           style={styles.fab}
           onPress={() => setScanModalOpen(true)}
@@ -620,7 +623,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#12090C',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 0,
   },
   header: {
     flexDirection: 'row',

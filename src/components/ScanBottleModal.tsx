@@ -2,8 +2,12 @@ import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +15,7 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import { getBottomInset, getTopInset } from '../lib/safeArea';
 import {
   analyzeWineLabel,
   compressBottlePhoto,
@@ -80,6 +85,24 @@ export function ScanBottleModal({
     defaultStatus === 'cellar' ? 1 : 0
   );
   const [personalNotes, setPersonalNotes] = useState('');
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () =>
+      setKeyboardVisible(true)
+    );
+    const hideSub = Keyboard.addListener(hideEvent, () =>
+      setKeyboardVisible(false)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (visible) {
@@ -279,32 +302,61 @@ export function ScanBottleModal({
     }
   };
 
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => {
-              resetForm();
-              onClose();
-            }}
-          >
-            <Text style={styles.cancelText}>Cancel</Text>
-          </Pressable>
-          <Text style={styles.headerTitle}>Scan & Log Bottle</Text>
-          <Pressable onPress={handleSaveLog} disabled={saving || analyzing}>
-            <Text
-              style={[
-                styles.saveText,
-                (saving || analyzing) && { opacity: 0.4 },
-              ]}
-            >
-              {saving ? 'Saving...' : 'Save'}
-            </Text>
-          </Pressable>
-        </View>
+  const ctaLabel =
+    entryStatus === 'cellar'
+      ? '🍾 Add to Cellar'
+      : entryStatus === 'tasted'
+      ? '🍷 Save Tasting'
+      : '🔖 Add to Wishlist';
 
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={() => {
+        if (!saving) {
+          resetForm();
+          onClose();
+        }
+      }}
+    >
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView style={styles.container} behavior="padding">
+          <View
+            style={[
+              styles.header,
+              {
+                paddingTop:
+                  Platform.OS === 'android' ? getTopInset() + 12 : 18,
+              },
+            ]}
+          >
+            <Pressable
+              onPress={() => {
+                resetForm();
+                onClose();
+              }}
+            >
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+            <Text style={styles.headerTitle}>Scan & Log Bottle</Text>
+            <Pressable onPress={handleSaveLog} disabled={saving || analyzing}>
+              <Text
+                style={[
+                  styles.saveText,
+                  (saving || analyzing) && { opacity: 0.4 },
+                ]}
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </Text>
+            </Pressable>
+          </View>
+
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 }]}
+          >
           {/* Step 1: Camera / Photo Picker */}
           <View style={styles.scanSection}>
             {photo ? (
@@ -713,12 +765,56 @@ export function ScanBottleModal({
             </View>
           </View>
         </ScrollView>
-      </View>
+
+          {!keyboardVisible && (
+            <View
+              style={[
+                styles.footerBar,
+                { paddingBottom: Math.max(getBottomInset(), 16) },
+              ]}
+            >
+              {errorMsg && photo && (
+                <Text style={styles.footerErrorText} numberOfLines={2}>
+                  {errorMsg}
+                </Text>
+              )}
+              <Pressable
+                style={[
+                  styles.footerButton,
+                  (saving || analyzing) && styles.footerButtonDisabled,
+                ]}
+                onPress={handleSaveLog}
+                disabled={saving || analyzing}
+              >
+                {analyzing ? (
+                  <View style={styles.footerButtonContent}>
+                    <ActivityIndicator color="#FFF8F5" size="small" />
+                    <Text style={styles.footerButtonText}>
+                      Analyzing Wine Label...
+                    </Text>
+                  </View>
+                ) : saving ? (
+                  <View style={styles.footerButtonContent}>
+                    <ActivityIndicator color="#FFF8F5" size="small" />
+                    <Text style={styles.footerButtonText}>Saving Bottle...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.footerButtonText}>{ctaLabel}</Text>
+                )}
+              </Pressable>
+            </View>
+          )}
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#12090C',
+  },
   container: {
     flex: 1,
     backgroundColor: '#12090C',
@@ -1066,5 +1162,41 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 84,
     textAlignVertical: 'top',
+  },
+  footerBar: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    backgroundColor: '#190D11',
+    borderTopWidth: 1,
+    borderTopColor: '#2B171E',
+  },
+  footerErrorText: {
+    color: '#FFD9DC',
+    fontSize: 12,
+    lineHeight: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  footerButton: {
+    backgroundColor: '#9E2A3A',
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#D65A6B',
+  },
+  footerButtonDisabled: {
+    opacity: 0.55,
+  },
+  footerButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  footerButtonText: {
+    color: '#FFF8F5',
+    fontSize: 16,
+    fontWeight: '800',
   },
 });

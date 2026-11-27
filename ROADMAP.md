@@ -1,6 +1,6 @@
 # Uncorked roadmap 🍷
 
-**Last reviewed:** 2026-11-20. This file follows the Atelier AI Labs roadmap standard (v1.0).
+**Last reviewed:** 2026-11-26. This file follows the Atelier AI Labs roadmap standard (v1.0).
 
 ## Vision
 
@@ -15,15 +15,15 @@ by default, a Corky that can take actions for me, and a real Android app. How it
 
 ## Current state
 
-- Personal project, not in the app stores, used mostly on an Android phone through Expo Go.
+- Personal project, not in the app stores, installed as a standalone Android app on a Pixel.
 - Working today: label scanning with Gemini (with a shared catalog so a bottle is only analyzed once), review
   before saving, the cellar with search and stats, and Corky chat with cellar tools.
 - In Cellar / Tasted / Wishlist tabs, the one-tap Uncork tasting sheet and flavor tag chips shipped on
   2026-11-19 (c996d06).
 - Security: row-level security on every table, private photos behind expiring links, catalog writes only
   through a confirmed database function, and per-person AI rate limits enforced in the database.
-- `eas.json` has an Android preview profile; whether a standalone `.apk` has been built and installed is
-  **(unverified)**.
+- Standalone Android preview `.apk` (EAS build) and `expo-updates` over-the-air updates on the `preview`
+  channel shipped and verified on Pixel on 2026-11-26.
 - Next major objective: not decided yet. Nothing below is approved work until it's marked `planned`.
 
 ## Roadmap
@@ -156,7 +156,7 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 #### UNC-013 — Standalone Android `.apk`
 
-- **Status:** planned
+- **Status:** done
 - **Priority:** P3
 - **Goal:** Install Uncorked on the Pixel as a standalone app instead of through Expo Go.
 
@@ -167,9 +167,11 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 - `eas build -p android --profile preview` produces an installable .apk.
 - It installs and signs in on the Pixel without Expo Go.
 
+**References:** EAS build `8c47facf-9b71-4467-8086-41f4a9091d6d` (2026-11-26)
+
 #### UNC-014 — Over-the-air updates
 
-- **Status:** planned
+- **Status:** done
 - **Priority:** P4
 - **Goal:** JavaScript and UI updates reach the installed app without a rebuild.
 
@@ -180,6 +182,8 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 **Done when:**
 - A JavaScript-only change, published as an update, reaches the installed app on its next launch without a rebuild.
+
+**References:** EAS update group `6c4a1995-27ad-467e-a059-a3bcae0cb781` (2026-11-26)
 
 ## Future ideas
 

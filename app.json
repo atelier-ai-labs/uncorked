@@ -21,14 +21,27 @@
         "android.permission.READ_MEDIA_IMAGES"
       ]
     },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "plugins": [
       [
         "expo-image-picker",
         {
           "photosPermission": "Allow Uncorked to access your photos to analyze wine labels.",
-          "cameraPermission": "Allow Uncorked to use your camera to scan wine bottle labels."
+          "cameraPermission": "Allow Uncorked to use your camera to scan wine bottle labels.",
+          "microphonePermission": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "6d014fad-82e1-4013-a88a-a82cc21871d2"
+      }
+    },
+    "owner": "atelier-ai-labs",
+    "updates": {
+      "url": "https://u.expo.dev/6d014fad-82e1-4013-a88a-a82cc21871d2"
+    }
   }
 }
