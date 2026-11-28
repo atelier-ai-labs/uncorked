@@ -4,8 +4,14 @@
     "slug": "uncorked",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#12090C",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#12090C"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nmagera.uncorked",
@@ -16,6 +22,10 @@
     },
     "android": {
       "package": "com.nmagera.uncorked",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#12090C"
+      },
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES"

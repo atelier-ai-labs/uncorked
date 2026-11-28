@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { Session } from '@supabase/supabase-js';
+import brandMark from './assets/brand-mark.png';
 import { supabase } from './src/lib/supabase';
 import { getBottomInset, getTopInset } from './src/lib/safeArea';
 import { resolveSignedBottlePhotoUrls } from './src/lib/wineVision';
@@ -257,9 +258,12 @@ export default function App() {
 
       {/* Top Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.brandSubtitle}>MY WINE JOURNAL</Text>
-          <Text style={styles.brandTitle}>Uncorked</Text>
+        <View style={styles.brandRow}>
+          <Image source={brandMark} style={styles.brandLogo} />
+          <View>
+            <Text style={styles.brandSubtitle}>MY WINE JOURNAL</Text>
+            <Text style={styles.brandTitle}>Uncorked</Text>
+          </View>
         </View>
         <Pressable
           style={styles.signOutButton}
@@ -631,6 +635,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 14,
     paddingBottom: 10,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brandLogo: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#12090C',
+    borderWidth: 1,
+    borderColor: '#382028',
   },
   brandSubtitle: {
     color: '#D49B6A',
