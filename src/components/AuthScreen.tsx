@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import brandMark from '../../assets/brand-mark.png';
 import { supabase } from '../lib/supabase';
+import { getBottomInset, getTopInset } from '../lib/safeArea';
 
 export function AuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
@@ -79,10 +81,17 @@ export function AuthScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={[
+        styles.container,
+        {
+          paddingTop: getTopInset() + 24,
+          paddingBottom: getBottomInset() + 24,
+        },
+      ]}
+      behavior="padding"
     >
       <View style={styles.card}>
+        <Image source={brandMark} style={styles.logo} />
         <Text style={styles.badge}>POCKET SOMMELIER & CELLAR</Text>
         <Text style={styles.title}>Uncorked</Text>
         <Text style={styles.subtitle}>
@@ -171,6 +180,15 @@ const styles = StyleSheet.create({
     padding: 28,
     borderWidth: 1,
     borderColor: '#382028',
+  },
+  logo: {
+    width: 68,
+    height: 68,
+    borderRadius: 18,
+    backgroundColor: '#12090C',
+    borderWidth: 1,
+    borderColor: '#4A2833',
+    marginBottom: 14,
   },
   badge: {
     color: '#D49B6A',

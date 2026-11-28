@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
-  Platform,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -15,7 +14,9 @@ import {
   View,
 } from 'react-native';
 import { Session } from '@supabase/supabase-js';
+import brandMark from './assets/brand-mark.png';
 import { supabase } from './src/lib/supabase';
+import { getBottomInset, getTopInset } from './src/lib/safeArea';
 import { resolveSignedBottlePhotoUrls } from './src/lib/wineVision';
 import { WineLog, WineLogStatus, WineType } from './src/types/database';
 import { AuthScreen } from './src/components/AuthScreen';
@@ -252,14 +253,17 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { paddingTop: getTopInset() }]}>
       <StatusBar barStyle="light-content" />
 
       {/* Top Header */}
       <View style={styles.header}>
-        <View>
-          <Text style={styles.brandSubtitle}>MY WINE JOURNAL</Text>
-          <Text style={styles.brandTitle}>Uncorked</Text>
+        <View style={styles.brandRow}>
+          <Image source={brandMark} style={styles.brandLogo} />
+          <View>
+            <Text style={styles.brandSubtitle}>MY WINE JOURNAL</Text>
+            <Text style={styles.brandTitle}>Uncorked</Text>
+          </View>
         </View>
         <Pressable
           style={styles.signOutButton}
@@ -396,7 +400,10 @@ export default function App() {
       <FlatList
         data={filteredLogs}
         keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingBottom: getBottomInset() + 100 },
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={loadingLogs}
@@ -543,7 +550,7 @@ export default function App() {
       />
 
       {/* Floating Action Bar: Scan Bottle + Ask Corky */}
-      <View style={styles.fabRow}>
+      <View style={[styles.fabRow, { bottom: getBottomInset() + 10 }]}>
         <Pressable
           style={styles.fab}
           onPress={() => setScanModalOpen(true)}
@@ -585,6 +592,7 @@ export default function App() {
           setCorkyDrawerOpen(false);
           setSelectedLog(log);
         }}
+        onCellarChanged={fetchCellarLogs}
       />
 
       <WineDetailModal
@@ -619,7 +627,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#12090C',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ?? 24 : 0,
   },
   header: {
     flexDirection: 'row',
@@ -628,6 +635,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 14,
     paddingBottom: 10,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brandLogo: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#12090C',
+    borderWidth: 1,
+    borderColor: '#382028',
   },
   brandSubtitle: {
     color: '#D49B6A',

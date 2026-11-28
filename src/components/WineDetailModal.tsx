@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
 import {
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+import { getBottomInset, getTopInset } from '../lib/safeArea';
 import { WineLog, WineLogStatus } from '../types/database';
 import { FlavorTagPicker } from './FlavorTagPicker';
 import { StarRatingInput } from './StarRatingInput';
@@ -132,24 +136,44 @@ export function WineDetailModal({
   };
 
   return (
-    <Modal visible={Boolean(log)} animationType="slide" presentationStyle="pageSheet">
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Pressable onPress={onClose}>
-            <Text style={styles.closeText}>Close</Text>
-          </Pressable>
-          <Text style={styles.headerTitle}>Bottle Profile</Text>
-          <Pressable
-            onPress={() => (editing ? handleUpdate() : setEditing(true))}
-            disabled={saving}
+    <Modal
+      visible={Boolean(log)}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.safeArea}>
+        <KeyboardAvoidingView style={styles.container} behavior="padding">
+          <View
+            style={[
+              styles.header,
+              {
+                paddingTop:
+                  Platform.OS === 'android' ? getTopInset() + 12 : 18,
+              },
+            ]}
           >
-            <Text style={styles.editText}>
-              {editing ? (saving ? 'Saving...' : 'Save') : 'Edit'}
-            </Text>
-          </Pressable>
-        </View>
+            <Pressable onPress={onClose}>
+              <Text style={styles.closeText}>Close</Text>
+            </Pressable>
+            <Text style={styles.headerTitle}>Bottle Profile</Text>
+            <Pressable
+              onPress={() => (editing ? handleUpdate() : setEditing(true))}
+              disabled={saving}
+            >
+              <Text style={styles.editText}>
+                {editing ? (saving ? 'Saving...' : 'Save') : 'Edit'}
+              </Text>
+            </Pressable>
+          </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: getBottomInset() + 36 },
+            ]}
+          >
           {log.photo_url && (
             <Image source={{ uri: log.photo_url }} style={styles.heroImage} />
           )}
@@ -518,13 +542,18 @@ export function WineDetailModal({
           >
             <Text style={styles.deleteButtonText}>Remove from My Cellar</Text>
           </Pressable>
-        </ScrollView>
-      </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#12090C',
+  },
   container: {
     flex: 1,
     backgroundColor: '#12090C',

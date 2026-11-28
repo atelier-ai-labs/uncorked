@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -15,9 +16,20 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../lib/supabase';
+import { getBottomInset } from '../lib/safeArea';
 import { compressBottlePhoto, CompressedPhoto } from '../lib/wineVision';
 import { findMentionedLogs } from '../lib/corkyBottleMatch';
-import { CorkyMessage, WineLog } from '../types/database';
+import {
+  executeCorkyAction,
+  normalizeProposedActions,
+} from '../lib/corkyActions';
+import {
+  CorkyActionStatus,
+  CorkyMessage,
+  CorkyProposedAction,
+  WineLog,
+} from '../types/database';
+import { CorkyActionCard } from './CorkyActionCard';
 
 interface CorkyChatDrawerProps {
   visible: boolean;
@@ -25,6 +37,7 @@ interface CorkyChatDrawerProps {
   logs: WineLog[];
   onClose: () => void;
   onOpenBottle: (log: WineLog) => void;
+  onCellarChanged?: () => void;
 }
 
 const QUICK_PROMPTS = [
@@ -56,15 +69,37 @@ export function CorkyChatDrawer({
   logs,
   onClose,
   onOpenBottle,
+  onCellarChanged,
 }: CorkyChatDrawerProps) {
   const [messages, setMessages] = useState<CorkyMessage[]>([]);
+  const [actionStatuses, setActionStatuses] = useState<
+    Record<string, CorkyActionStatus>
+  >({});
   const [input, setInput] = useState('');
   const [attachedPhoto, setAttachedPhoto] = useState<CompressedPhoto | null>(
     null
   );
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const listRef = useRef<FlatList<CorkyMessage>>(null);
+
+  useEffect(() => {
+    const showEvent =
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent =
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () =>
+      setKeyboardVisible(true)
+    );
+    const hideSub = Keyboard.addListener(hideEvent, () =>
+      setKeyboardVisible(false)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (visible && userId) {
@@ -92,7 +127,24 @@ export function CorkyChatDrawer({
 
   const handleClearChat = async () => {
     setMessages([]);
+    setActionStatuses({});
     await supabase.from('corky_messages').delete().eq('user_id', userId);
+  };
+
+  const handleConfirmAction = async (action: CorkyProposedAction) => {
+    await executeCorkyAction(action, userId);
+    setActionStatuses((prev) => ({
+      ...prev,
+      [action.id]: 'confirmed',
+    }));
+    onCellarChanged?.();
+  };
+
+  const handleCancelAction = (action: CorkyProposedAction) => {
+    setActionStatuses((prev) => ({
+      ...prev,
+      [action.id]: 'cancelled',
+    }));
   };
 
   const handleAttachPhoto = async (useCamera: boolean) => {
@@ -132,8 +184,7 @@ export function CorkyChatDrawer({
     const optimisticUserMsg: CorkyMessage = {
       id: `temp-user-${Date.now()}`,
       role: 'user',
-      content:
-        textToSend || '📷 Inspect this wine bottle and tell me about it.',
+      content: textToSend || '📷 Sent a wine bottle photo',
       tools_used: [],
       created_at: new Date().toISOString(),
     };
@@ -147,7 +198,7 @@ export function CorkyChatDrawer({
         body: {
           message:
             textToSend ||
-            'Please inspect this wine label photo. If the vintage or producer is unclear, ask me to clarify rather than guessing.',
+            'Please inspect this wine bottle photo and check my cellar. If the bottle looks empty or finished and is in my cellar, prepare an uncork confirmation card; if any key label details are unclear, ask me to clarify rather than guessing.',
           imageBase64: photoToSend?.base64,
           mimeType: photoToSend?.mimeType,
           history: messages.slice(-8).map((m) => ({
@@ -173,12 +224,15 @@ export function CorkyChatDrawer({
         return;
       }
 
+      const proposedActions = normalizeProposedActions(data?.proposedActions);
+
       const assistantMsg: CorkyMessage = {
         id: `temp-assistant-${Date.now()}`,
         role: 'assistant',
         content: data.reply,
         tools_used: Array.isArray(data.toolsUsed) ? data.toolsUsed : [],
         created_at: new Date().toISOString(),
+        proposed_actions: proposedActions.length > 0 ? proposedActions : undefined,
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
@@ -202,12 +256,14 @@ export function CorkyChatDrawer({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent
+      onRequestClose={onClose}
+    >
       <View style={styles.backdrop}>
-        <KeyboardAvoidingView
-          style={styles.drawer}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        <KeyboardAvoidingView style={styles.drawer} behavior="padding">
           {/* Drawer Handle & Header */}
           <View style={styles.drawerHeader}>
             <View style={styles.titleRow}>
@@ -275,17 +331,36 @@ export function CorkyChatDrawer({
                   </Text>
                   <Text style={styles.welcomeBody}>
                     I have direct access to your Uncorked cellar, ratings, and
-                    tasting notes. Ask me what bottle to open for dinner, how
-                    two wines compare, what your palate profile looks like, or
-                    snap a photo of any mystery bottle!
+                    tasting notes. Ask me what bottle to open for dinner, tell
+                    me when you finish a bottle (or snap the empty label) to log
+                    it, add a wine to your wishlist, or update your bottle
+                    count!
                   </Text>
                 </View>
               }
               renderItem={({ item }) => {
                 const isUser = item.role === 'user';
+                const proposedActions = isUser
+                  ? []
+                  : item.proposed_actions || [];
+                const actionLogIds = new Set<number>(
+                  proposedActions
+                    .filter(
+                      (
+                        a
+                      ): a is Extract<
+                        CorkyProposedAction,
+                        { type: 'uncork_bottle' | 'update_stock' }
+                      > =>
+                        a.type === 'uncork_bottle' || a.type === 'update_stock'
+                    )
+                    .map((a) => a.logId)
+                );
                 const mentioned = isUser
                   ? []
-                  : findMentionedLogs(item.content, logs);
+                  : findMentionedLogs(item.content, logs).filter(
+                      (l) => !actionLogIds.has(l.id)
+                    );
                 return (
                   <View
                     style={[
@@ -318,6 +393,16 @@ export function CorkyChatDrawer({
                         {item.content}
                       </Text>
                     </View>
+
+                    {proposedActions.map((action) => (
+                      <CorkyActionCard
+                        key={action.id}
+                        action={action}
+                        status={actionStatuses[action.id] ?? 'pending'}
+                        onConfirm={handleConfirmAction}
+                        onCancel={handleCancelAction}
+                      />
+                    ))}
 
                     {mentioned.map((log) => (
                       <Pressable
@@ -380,7 +465,16 @@ export function CorkyChatDrawer({
           )}
 
           {/* Input Bar */}
-          <View style={styles.inputBar}>
+          <View
+            style={[
+              styles.inputBar,
+              {
+                paddingBottom: keyboardVisible
+                  ? 10
+                  : Math.max(getBottomInset(), 14),
+              },
+            ]}
+          >
             <Pressable
               style={styles.iconButton}
               onPress={() => handleAttachPhoto(true)}
