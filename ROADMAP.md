@@ -58,20 +58,21 @@ so it's all `idea` for now. Mark an item `planned` (and add **Done when**) to ap
 
 - **Status:** done
 - **Priority:** P3
-- **Goal:** Tell Corky "Just finished that 2024 Saracosa, smooth with cherry notes, 4.4" (or send a photo of the
-  empty bottle), and confirm a card that logs it.
+- **Goal:** Tell Corky "Just finished that 2024 Saracosa, smooth with cherry notes, 4.4" (or send a photo of
+  the empty bottle), and confirm a card that logs it.
 
 **Requirements:**
 - Corky finds the bottle with `search_user_cellar`.
 - An in-chat confirmation card (`Confirm & Save` / `Cancel`) runs `public.uncork_bottle` atomically.
 - The same confirmation cards for wishlist additions and quick stock changes.
 
-**Out of scope:** Corky changing anything without a confirmation tap.
-
 **Done when:**
-- Telling Corky about a finished bottle (or sending a photo of it) shows a confirmation card for the right cellar bottle.
+- Telling Corky about a finished bottle (or sending a photo of it) shows a confirmation card for the right
+  cellar bottle.
 - Confirm & Save logs the tasting and lowers bottles on hand by one; Cancel changes nothing.
 - typecheck passes.
+
+**Out of scope:** Corky changing anything without a confirmation tap.
 
 #### UNC-007 — Morning-after check-in
 
